@@ -301,27 +301,47 @@ def build_forecasts():
         first = False
         blocks.append(f"<div class='tk' id='tk_{t}'>{chart_div}{em_tbl}{f_tbl}{v_tbl}</div>")
 
-    options = "".join(f"<option value='{t}'>{t}</option>" for t in tickers)
+    all_syms = sorted(set(sc.load_universe()))
+    datalist = "".join(f"<option value='{t}'></option>" for t in all_syms)
+    pre_js = "[" + ",".join(f"'{t}'" for t in tickers) + "]"
+    first = tickers[0] if tickers else ""
+    wf_url = "https://github.com/drobinson18dr9-spec/stocksight/actions/workflows/forecast-ticker.yml"
     page = f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>StockSight Forecasts</title>
 <style>
  body{{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f7f8fa;color:#1a1a2e}}
  header{{background:#0f1b3d;color:#fff;padding:16px 22px}} header a{{color:#9ec5ff}}
- .bar{{padding:14px 22px}} select{{font-size:16px;padding:8px 12px;border-radius:8px}}
+ .bar{{padding:14px 22px}} input{{font-size:16px;padding:8px 12px;border-radius:8px;border:1px solid #ccc;width:240px}}
  .tk{{display:none;margin:0 22px 22px;background:#fff;border-radius:10px;padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
  table{{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0 16px}}
  th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #eee}} th{{background:#f0f2f7}}
- h4{{margin:14px 6px 4px}}
+ h4{{margin:14px 6px 4px}} button{{border:0;padding:9px 14px;border-radius:8px;cursor:pointer}}
 </style></head><body>
 <header><h1>StockSight Forecasts explorer</h1>
-<p><a href="index.html">&larr; back to scorecard</a> &middot; pick a ticker. Dotted lines and the forward table are predictions for future dates (no actuals yet).</p></header>
-<div class="bar"><label>Ticker: </label><select id="picker" onchange="show(this.value)">{options}</select></div>
+<p><a href="index.html">&larr; back to scorecard</a> &middot; type any of {len(all_syms)} tickers. Dotted lines and the forward table are future predictions (no actuals yet).</p></header>
+<div class="bar"><label>Ticker: </label>
+  <input id="picker" list="alltickers" placeholder="type a symbol, e.g. AAPL" autocomplete="off" value="{first}">
+  <datalist id="alltickers">{datalist}</datalist>
+  <span style="margin-left:10px;color:#666">{len(tickers)} precomputed; any other can be requested in 1 click</span>
+</div>
 {''.join(blocks)}
+<div id="tk__request" class="tk"><h3>Forecast not precomputed for <span id="reqsym"></span></h3>
+  <p>A static page can't run the models live, so predictions for this ticker are computed on demand.
+  Click below, press "Run workflow", enter the symbol, and it appears here in ~5 minutes.</p>
+  <p><a href="{wf_url}" target="_blank"><button style="background:#0f1b3d;color:#fff">Compute this forecast &rarr;</button></a></p></div>
 <script>
- function show(t){{document.querySelectorAll('.tk').forEach(e=>e.style.display='none');
-   var el=document.getElementById('tk_'+t); if(el){{el.style.display='block'; window.dispatchEvent(new Event('resize'));}}}}
- show(document.getElementById('picker').value);
+ var PRE = {pre_js};
+ function show(t){{
+   t=(t||'').toUpperCase().trim();
+   document.querySelectorAll('.tk').forEach(e=>e.style.display='none');
+   var el=document.getElementById('tk_'+t);
+   if(el){{el.style.display='block'; window.dispatchEvent(new Event('resize'));}}
+   else if(t){{document.getElementById('reqsym').textContent=t;
+               document.getElementById('tk__request').style.display='block';}}
+ }}
+ document.getElementById('picker').addEventListener('change', function(){{show(this.value);}});
+ show('{first}');
 </script></body></html>"""
     (SITE / "forecasts.html").write_text(page, encoding="utf-8")
     print(f"Wrote forecasts explorer: {len(tickers)} tickers")

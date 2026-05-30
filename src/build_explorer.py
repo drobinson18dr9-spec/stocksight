@@ -26,14 +26,23 @@ import predict as pr
 ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "predict"
 
 
-def portfolio_tickers(top_n=12) -> list[str]:
+def portfolio_tickers(top_n=12, extra_good=28) -> list[str]:
+    """Portfolio names plus the top GOOD-rated names, so the explorer covers a
+    meaningful default set (any other ticker is available on demand)."""
     bars = sc.get_bars()
     m = sc.compute_metrics(bars)
     inv = sc.filter_investable(m)
     s = sc.score(inv)
     p = sc.build_portfolio(s, bars, top_n=top_n, max_weight=0.25,
                            apply_sentiment_veto=False)
-    return p["ticker"].tolist()
+    names = list(p["ticker"])
+    good = s[(s["verdict"] == "GOOD") & (s["ticker"] != sc.BENCHMARK)]["ticker"].tolist()
+    for g in good:
+        if g not in names:
+            names.append(g)
+        if len(names) >= top_n + extra_good:
+            break
+    return names
 
 
 def main(tickers=None, test_days=20, horizon=15):
