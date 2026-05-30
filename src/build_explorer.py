@@ -45,11 +45,18 @@ def portfolio_tickers(top_n=12, extra_good=28) -> list[str]:
     return names
 
 
-def main(tickers=None, test_days=20, horizon=15):
+def main(tickers=None, test_days=20, horizon=15,
+         all_universe=False, shard=0, num_shards=1):
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     if not tickers:
-        tickers = portfolio_tickers()
-    print(f"Precomputing forecasts for {len(tickers)}: {tickers}")
+        if all_universe:
+            tickers = sorted(set(sc.load_universe()))     # every modelable name
+        else:
+            tickers = portfolio_tickers()
+    if num_shards > 1:
+        tickers = tickers[shard::num_shards]              # this runner's slice
+    print(f"Precomputing forecasts: {len(tickers)} names "
+          f"(shard {shard}/{num_shards}, all_universe={all_universe})")
 
     # One batched pull for all names
     start = datetime.now(timezone.utc) - timedelta(days=int(3 * 365) + 60)
@@ -103,5 +110,10 @@ if __name__ == "__main__":
     ap.add_argument("--tickers", nargs="+", default=None)
     ap.add_argument("--test-days", type=int, default=20)
     ap.add_argument("--horizon", type=int, default=15)
+    ap.add_argument("--all-universe", action="store_true",
+                    help="compute every modelable name in the universe")
+    ap.add_argument("--shard", type=int, default=0)
+    ap.add_argument("--num-shards", type=int, default=1)
     args = ap.parse_args()
-    main(tickers=args.tickers, test_days=args.test_days, horizon=args.horizon)
+    main(tickers=args.tickers, test_days=args.test_days, horizon=args.horizon,
+         all_universe=args.all_universe, shard=args.shard, num_shards=args.num_shards)

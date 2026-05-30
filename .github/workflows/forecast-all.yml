@@ -1,0 +1,100 @@
+name: Compute ALL forecasts (parallel)
+
+# Precompute model forecasts for EVERY modelable ticker, in parallel across
+# many free runners, then assemble + deploy. Run manually from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Number of parallel shards (GitHub runs ~20 at once)"
+        default: "40"
+      test_days:
+        description: "Walk-forward backtest days per ticker"
+        default: "12"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.s.outputs.matrix }}
+    steps:
+      - id: s
+        run: |
+          N=${{ github.event.inputs.shards }}
+          echo "matrix=$(python3 -c "import json;print(json.dumps(list(range($N))))")" >> "$GITHUB_OUTPUT"
+
+  compute:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - name: Compute shard ${{ matrix.shard }}
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+        run: |
+          python src/build_explorer.py --all-universe \
+            --shard ${{ matrix.shard }} --num-shards ${{ github.event.inputs.shards }} \
+            --test-days ${{ github.event.inputs.test_days }} --horizon 10
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pred-${{ matrix.shard }}
+          path: assets/predict/*.json
+          retention-days: 1
+          if-no-files-found: ignore
+
+  collect:
+    needs: compute
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - name: Gather all shard forecasts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pred-*
+          merge-multiple: true
+          path: assets/predict
+      - name: Persist forecasts to repo
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add assets/predict
+          git commit -m "Full universe forecast precompute" || echo "no change"
+          git pull --rebase || true
+          git push || echo "push skipped"
+      - name: Build dashboard + full explorer
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+        run: python src/dashboard.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: reports/site
+
+  deploy:
+    needs: collect
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -231,11 +231,11 @@ def build_forecasts():
     a ticker picker, per-ticker actual-vs-model chart, error metrics,
     forward forecast, and the actual/predicted/variance table."""
     pred_dir = Path(__file__).resolve().parents[1] / "assets" / "predict"
-    idx_file = pred_dir / "index.json"
-    if not idx_file.exists():
-        return
     import json
-    tickers = json.loads(idx_file.read_text())["tickers"]
+    if not pred_dir.exists():
+        return
+    # Serve every precomputed ticker file present (robust to parallel merges).
+    tickers = sorted(f.stem for f in pred_dir.glob("*.json") if f.stem != "index")
     if not tickers:
         return
     SITE.mkdir(parents=True, exist_ok=True)
