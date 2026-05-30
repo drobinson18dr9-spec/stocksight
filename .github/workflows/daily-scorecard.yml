@@ -44,3 +44,5 @@ jobs:
           name: scorecard-${{ github.run_id }}
           path: reports/
           if-no-files-found: ignore
+
+# (registered via push)
