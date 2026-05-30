@@ -10,3 +10,6 @@ plotly>=5.20
 matplotlib>=3.7
 nltk>=3.8
 feedparser>=6.0
+statsmodels>=0.14
+arch>=6.0
+xgboost>=2.0
