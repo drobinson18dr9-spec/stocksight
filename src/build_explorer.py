@@ -1,0 +1,89 @@
+"""
+Precompute the per-ticker prediction data that powers the dashboard's
+Forecasts explorer. For each name it runs the full model panel (predict.py):
+walk-forward actual-vs-predicted, error metrics, and a forward forecast.
+Writes assets/predict/<TICKER>.json and assets/predict/index.json.
+
+A static site cannot run Python on demand, so we precompute for the portfolio
+names (and optionally top GOOD names). Arbitrary tickers still work via the
+local CLI: python src/predict.py --ticker XYZ
+
+Usage: python src/build_explorer.py [--tickers AAPL MSFT ...] [--test-days 20]
+"""
+
+from __future__ import annotations
+import argparse
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+import scorecard as sc
+import predict as pr
+
+ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "predict"
+
+
+def portfolio_tickers(top_n=12) -> list[str]:
+    bars = sc.get_bars()
+    m = sc.compute_metrics(bars)
+    inv = sc.filter_investable(m)
+    s = sc.score(inv)
+    p = sc.build_portfolio(s, bars, top_n=top_n, max_weight=0.25,
+                           apply_sentiment_veto=False)
+    return p["ticker"].tolist()
+
+
+def main(tickers=None, test_days=20, horizon=15):
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    if not tickers:
+        tickers = portfolio_tickers()
+    print(f"Precomputing forecasts for {len(tickers)}: {tickers}")
+
+    # One batched pull for all names
+    start = datetime.now(timezone.utc) - timedelta(days=int(3 * 365) + 60)
+    end = datetime.now(timezone.utc) - timedelta(days=1)
+    bars = sc.fetch_bars(tickers, start, end)
+
+    done = []
+    for t in tickers:
+        s = bars[bars["ticker"] == t].sort_values("timestamp")
+        if len(s) < 300:
+            print(f"  {t}: insufficient history, skipped")
+            continue
+        prices = pd.Series(s["close"].values,
+                           index=pd.to_datetime(s["timestamp"].values)).astype(float)
+        try:
+            wf = pr.walk_forward(prices, test_days)
+            for name in pr.MODELS:
+                wf[f"var_{name}"] = (wf["actual"] - wf[name]).round(2)
+            metrics = pr.error_metrics(wf)
+            fwd = pr.forward_forecast(prices, horizon)
+            payload = {
+                "ticker": t,
+                "last_close": round(float(prices.iloc[-1]), 2),
+                "last_date": prices.index[-1].strftime("%Y-%m-%d"),
+                "models": list(pr.MODELS),
+                "walk_forward": json.loads(wf.assign(date=wf["date"].astype(str)).to_json(orient="records")),
+                "error_metrics": json.loads(metrics.to_json(orient="records")),
+                "forward": json.loads(fwd.assign(date=fwd["date"].astype(str)).to_json(orient="records")),
+            }
+            (ASSET_DIR / f"{t}.json").write_text(json.dumps(payload), encoding="utf-8")
+            done.append(t)
+            print(f"  {t}: done")
+        except Exception as e:
+            print(f"  {t}: failed ({e})")
+
+    (ASSET_DIR / "index.json").write_text(json.dumps({"tickers": done}), encoding="utf-8")
+    print(f"Wrote {len(done)} forecast files to {ASSET_DIR}")
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--tickers", nargs="+", default=None)
+    ap.add_argument("--test-days", type=int, default=20)
+    ap.add_argument("--horizon", type=int, default=15)
+    args = ap.parse_args()
+    main(tickers=args.tickers, test_days=args.test_days, horizon=args.horizon)

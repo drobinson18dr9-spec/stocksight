@@ -160,7 +160,7 @@ def build(universe_limit=None):
   <div class="card"><div class="n bad">{len(bad)}</div>BAD</div>
   <div class="card"><div class="n">{len(portfolio)}</div>in portfolio</div>
 </div>
-<div class="tabs">{tab_btns}</div>
+<div class="tabs">{tab_btns}<a href="forecasts.html" style="text-decoration:none"><button style="background:#0f1b3d;color:#fff">Model Forecasts &rarr;</button></a></div>
 <div id="picks" class="chart"><h3 style="margin:6px 10px">Optimized portfolio</h3>{table}</div>
 <div id="risk" class="chart">{_div(f1, first=True)}</div>
 <div id="vsspy" class="chart">{_div(f2)}</div>
@@ -183,6 +183,108 @@ For research and education. Do your own diligence.</footer>
     out = SITE / "index.html"
     out.write_text(html, encoding="utf-8")
     print(f"Wrote dashboard: {out}")
+    build_forecasts()
+
+
+def build_forecasts():
+    """Generate forecasts.html from precomputed assets/predict/*.json:
+    a ticker picker, per-ticker actual-vs-model chart, error metrics,
+    forward forecast, and the actual/predicted/variance table."""
+    pred_dir = Path(__file__).resolve().parents[1] / "assets" / "predict"
+    idx_file = pred_dir / "index.json"
+    if not idx_file.exists():
+        return
+    import json
+    tickers = json.loads(idx_file.read_text())["tickers"]
+    if not tickers:
+        return
+    SITE.mkdir(parents=True, exist_ok=True)
+
+    blocks, first = [], True
+    for t in tickers:
+        f = pred_dir / f"{t}.json"
+        if not f.exists():
+            continue
+        d = json.loads(f.read_text())
+        models = d["models"]
+        wf = pd.DataFrame(d["walk_forward"]); wf["date"] = pd.to_datetime(wf["date"])
+        fwd = pd.DataFrame(d["forward"]); fwd["date"] = pd.to_datetime(fwd["date"])
+        em = pd.DataFrame(d["error_metrics"])
+
+        fig = go.Figure()
+        fig.add_scatter(x=wf["date"], y=wf["actual"], name="ACTUAL",
+                        line=dict(color="black", width=3))
+        for mname in models:
+            fig.add_scatter(x=wf["date"], y=wf[mname], name=mname, line=dict(width=1.2))
+            fig.add_scatter(x=fwd["date"], y=fwd[mname], name=mname + " (fwd)",
+                            line=dict(width=1, dash="dot"), showlegend=False)
+        fig.add_scatter(x=fwd["date"], y=fwd["ensemble_mean"], name="Ensemble (forecast)",
+                        line=dict(color="red", width=2.5, dash="dash"))
+        fig.update_layout(title=f"{t}: actual vs model predictions (dotted = future forecast)",
+                          template="plotly_white", height=520, yaxis_title="Price ($)")
+
+        # error metrics table
+        em_rows = "".join(
+            f"<tr><td>{r['model']}</td><td>{r['MAE']}</td><td>{r['RMSE']}</td>"
+            f"<td>{r['MAPE_%']}%</td><td>{r['DirAcc_%']}%</td></tr>"
+            for _, r in em.iterrows())
+        em_tbl = (f"<h4>Model accuracy (walk-forward backtest)</h4><table>"
+                  f"<tr><th>Model</th><th>MAE</th><th>RMSE</th><th>MAPE</th><th>Dir. acc</th></tr>"
+                  f"{em_rows}</table>")
+
+        # forward forecast table
+        fcols = models + ["ensemble_mean"]
+        fhead = "".join(f"<th>{c}</th>" for c in fcols)
+        frows = "".join("<tr><td>" + r["date"].strftime("%Y-%m-%d") + "</td>" +
+                        "".join(f"<td>{r[c]:.2f}</td>" for c in fcols) + "</tr>"
+                        for _, r in fwd.iterrows())
+        f_tbl = (f"<h4>Forward forecast (future dates, no actuals exist)</h4><table>"
+                 f"<tr><th>Date</th>{fhead}</tr>{frows}</table>")
+
+        # actual vs predicted vs variance (last 8 backtest days)
+        recent = wf.tail(8)
+        vhead = "".join(f"<th>{m}</th><th>&Delta;{m}</th>" for m in models)
+        vrows = ""
+        for _, r in recent.iterrows():
+            cells = "".join(
+                f"<td>{r[m]:.2f}</td><td style='color:#888'>{r['var_'+m]:+.2f}</td>"
+                for m in models)
+            vrows += (f"<tr><td>{r['date'].strftime('%Y-%m-%d')}</td>"
+                      f"<td><b>{r['actual']:.2f}</b></td>{cells}</tr>")
+        v_tbl = (f"<h4>Actual vs predicted vs variance (&Delta; = actual - predicted)</h4>"
+                 f"<div style='overflow-x:auto'><table><tr><th>Date</th><th>Actual</th>{vhead}</tr>"
+                 f"{vrows}</table></div>")
+
+        chart_div = fig.to_html(full_html=False,
+                                include_plotlyjs="cdn" if first else False,
+                                config={"responsive": True, "displaylogo": False})
+        first = False
+        blocks.append(f"<div class='tk' id='tk_{t}'>{chart_div}{em_tbl}{f_tbl}{v_tbl}</div>")
+
+    options = "".join(f"<option value='{t}'>{t}</option>" for t in tickers)
+    page = f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StockSight Forecasts</title>
+<style>
+ body{{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f7f8fa;color:#1a1a2e}}
+ header{{background:#0f1b3d;color:#fff;padding:16px 22px}} header a{{color:#9ec5ff}}
+ .bar{{padding:14px 22px}} select{{font-size:16px;padding:8px 12px;border-radius:8px}}
+ .tk{{display:none;margin:0 22px 22px;background:#fff;border-radius:10px;padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
+ table{{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0 16px}}
+ th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #eee}} th{{background:#f0f2f7}}
+ h4{{margin:14px 6px 4px}}
+</style></head><body>
+<header><h1>StockSight Forecasts explorer</h1>
+<p><a href="index.html">&larr; back to scorecard</a> &middot; pick a ticker. Dotted lines and the forward table are predictions for future dates (no actuals yet).</p></header>
+<div class="bar"><label>Ticker: </label><select id="picker" onchange="show(this.value)">{options}</select></div>
+{''.join(blocks)}
+<script>
+ function show(t){{document.querySelectorAll('.tk').forEach(e=>e.style.display='none');
+   var el=document.getElementById('tk_'+t); if(el){{el.style.display='block'; window.dispatchEvent(new Event('resize'));}}}}
+ show(document.getElementById('picker').value);
+</script></body></html>"""
+    (SITE / "forecasts.html").write_text(page, encoding="utf-8")
+    print(f"Wrote forecasts explorer: {len(tickers)} tickers")
 
 
 if __name__ == "__main__":

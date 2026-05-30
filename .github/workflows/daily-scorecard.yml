@@ -44,6 +44,12 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: python src/scorecard.py --top 12 --max-weight 0.25
 
+      - name: Refresh model forecasts (per-ticker explorer data)
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+        run: python src/build_explorer.py --test-days 20 --horizon 15
+
       - name: Build interactive dashboard
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
