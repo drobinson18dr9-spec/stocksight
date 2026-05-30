@@ -1,0 +1,7 @@
+.env
+reports/*.csv
+reports/*.md
+__pycache__/
+*.pyc
+.venv/
+.DS_Store

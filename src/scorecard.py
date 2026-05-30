@@ -1,0 +1,482 @@
+"""
+StockSight Daily Scorecard
+==========================
+
+Purpose : Screen a ticker universe on trailing risk-adjusted performance,
+          label each name GOOD / NEUTRAL / BAD, then build a max-Sharpe
+          portfolio from the top names using a Ledoit-Wolf shrinkage
+          covariance (stable, well-conditioned). Writes a CSV + Markdown
+          brief and returns a short text suitable for SMS.
+
+Inputs  : data/Ticker List.xlsx          (column "Ticker")
+          ALPACA_API_KEY, ALPACA_API_SECRET   (env / .env)
+
+Outputs : reports/<YYYY-MM-DD>_scores.csv
+          reports/<YYYY-MM-DD>_scorecard.md
+          returns a short brief string (also printed)
+
+Usage   : python src/scorecard.py
+          python src/scorecard.py --top 10 --max-weight 0.25 --universe-limit 1500
+
+This is analytical output, NOT financial advice. Methodology is sound;
+returns are never guaranteed. Past performance does not predict the future.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import time
+import argparse
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+# Third-party, all lightweight
+from dotenv import load_dotenv
+from sklearn.covariance import LedoitWolf
+from scipy.optimize import minimize
+
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Configuration
+# ──────────────────────────────────────────────────────────────────────
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data"
+REPORTS_DIR = ROOT / "reports"
+TICKER_FILE = DATA_DIR / "Ticker List.xlsx"
+
+RISK_FREE_RATE = 0.04                       # annual risk-free rate
+TRADING_DAYS = 252                          # standard annualization factor
+RF_DAILY = (1 + RISK_FREE_RATE) ** (1 / TRADING_DAYS) - 1   # geometric daily rf
+MIN_HISTORY = TRADING_DAYS + 1              # need >= 1y of closes to screen
+MIN_OBS = 200                               # min usable daily returns in window
+BENCHMARK = "SPY"
+
+# Return winsorization (guards against bad ticks / data errors)
+WINSOR_LO, WINSOR_HI = 0.005, 0.995
+
+# Liquidity / sanity screen thresholds
+MIN_SHARPE = 0.30
+MAX_VOL = 0.80
+MIN_VOL = 0.05
+MIN_MEDIAN_DOLLAR_VOL = 5_000_000   # >= $5M median daily traded
+MAX_DRAWDOWN_FLOOR = -0.50          # reject names that fell >50% peak-to-trough
+MIN_SHARPE_TSTAT = 1.5              # Sharpe must be ~marginally significant for the portfolio
+
+WARRANT_UNIT_SUFFIXES = ("WS", "WT", "WSA", "WTA", "UN", "UNA")
+
+load_dotenv(ROOT / ".env")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Universe
+# ──────────────────────────────────────────────────────────────────────
+def load_universe(limit: int | None = None) -> list[str]:
+    df = pd.read_excel(TICKER_FILE)
+    col = next((c for c in ["Ticker", "Ticker Symbol", "Symbol", "symbol", "ticker"]
+                if c in df.columns), df.columns[0])
+    syms = (
+        df[col].astype(str).str.upper().str.strip()
+        .loc[lambda s: s.str.match(r"^[A-Z]+$", na=False)]
+    )
+    cleaned = sorted({
+        s for s in syms
+        if not s.endswith(WARRANT_UNIT_SUFFIXES) and 1 <= len(s) <= 5
+    })
+    if limit:
+        cleaned = cleaned[:limit]
+    if BENCHMARK not in cleaned:
+        cleaned.append(BENCHMARK)
+    return cleaned
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Data pull (batched, fault-tolerant)
+# ──────────────────────────────────────────────────────────────────────
+def fetch_bars(symbols: list[str], start: datetime, end: datetime) -> pd.DataFrame:
+    key = os.environ.get("ALPACA_API_KEY")
+    secret = os.environ.get("ALPACA_API_SECRET")
+    if not key or not secret:
+        sys.exit("ERROR: set ALPACA_API_KEY and ALPACA_API_SECRET (see .env.example).")
+
+    client = StockHistoricalDataClient(key, secret)
+    frames, failed = [], []
+    batch_size = 200
+    batches = [symbols[i:i + batch_size] for i in range(0, len(symbols), batch_size)]
+    print(f"Pulling {len(symbols)} tickers in {len(batches)} batches...")
+
+    for i, batch in enumerate(batches, 1):
+        try:
+            req = StockBarsRequest(
+                symbol_or_symbols=batch,
+                timeframe=TimeFrame.Day,
+                start=start,
+                end=end,
+                adjustment="all",
+            )
+            df = client.get_stock_bars(req).df
+            if df is not None and not df.empty:
+                df = df.reset_index().rename(columns={"symbol": "ticker"})
+                frames.append(df)
+        except Exception as e:
+            failed.extend(batch)
+            print(f"  batch {i} failed ({type(e).__name__}); will skip {len(batch)} syms")
+        if i % 5 == 0 or i == len(batches):
+            print(f"  batch {i}/{len(batches)} done")
+        time.sleep(0.2)
+
+    if not frames:
+        sys.exit("ERROR: no bar data returned. Check API keys / connectivity.")
+
+    out = pd.concat(frames, ignore_index=True)
+    out["timestamp"] = pd.to_datetime(out["timestamp"]).dt.tz_localize(None)
+    out = out.sort_values(["ticker", "timestamp"]).reset_index(drop=True)
+    if failed:
+        print(f"  {len(failed)} tickers failed to pull (skipped).")
+    print(f"Pulled {out['ticker'].nunique()} tickers, {len(out):,} rows.")
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Per-ticker metrics
+#
+# All statistics use simple (arithmetic) daily returns over the trailing
+# window, computed strictly point-in-time (no future data). Citations:
+#   Sharpe ratio ........ Sharpe (1966); annualization & t-stat per Lo (2002)
+#   Sortino ratio ....... Sortino & Price (1994)  [downside deviation vs MAR]
+#   12-1 momentum ....... Jegadeesh & Titman (1993)
+#   Max drawdown ........ standard peak-to-trough on the equity curve
+# ──────────────────────────────────────────────────────────────────────
+def _winsorize(s: pd.Series, lo: float = WINSOR_LO, hi: float = WINSOR_HI) -> pd.Series:
+    if len(s) == 0:
+        return s
+    return s.clip(s.quantile(lo), s.quantile(hi))
+
+
+def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for ticker, g in bars.groupby("ticker"):
+        g = g.sort_values("timestamp")
+        close_all = g["close"].astype(float)
+        if len(close_all) < MIN_HISTORY:
+            continue
+
+        # Trailing window: TRADING_DAYS+1 closes -> TRADING_DAYS returns
+        close = close_all.tail(TRADING_DAYS + 1)
+        ret = close.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+        ret = _winsorize(ret)
+        n = len(ret)
+        sd = ret.std(ddof=1)                      # sample std
+        if n < MIN_OBS or not np.isfinite(sd) or sd == 0:
+            continue
+
+        # ── Sharpe (annualized) and its significance ─────────────────
+        excess = ret - RF_DAILY
+        mean_excess = excess.mean()
+        sharpe_daily = mean_excess / sd
+        sharpe = np.sqrt(TRADING_DAYS) * sharpe_daily
+        # t-stat of the mean excess return under IID: t = SR_daily * sqrt(n)
+        sharpe_tstat = sharpe_daily * np.sqrt(n)
+        ann_vol = sd * np.sqrt(TRADING_DAYS)
+
+        # ── CAGR (geometric realized return, descriptive) ────────────
+        p0, p1 = float(close.iloc[0]), float(close.iloc[-1])
+        cagr = (p1 / p0) ** (TRADING_DAYS / n) - 1 if p0 > 0 else np.nan
+
+        # ── Sortino: downside deviation vs target=rf over ALL obs ────
+        downside_sq = np.minimum(excess, 0.0) ** 2
+        dd_dev = np.sqrt(downside_sq.mean())
+        sortino = np.sqrt(TRADING_DAYS) * (mean_excess / dd_dev) if dd_dev > 0 else np.nan
+
+        # ── 12-1 momentum: P[t-21] / P[t-252] - 1 ────────────────────
+        p_12m = float(close_all.iloc[-(TRADING_DAYS + 1)])   # ~12 months ago
+        p_1m = float(close_all.iloc[-22])                    # ~1 month ago
+        momentum = p_1m / p_12m - 1 if p_12m > 0 else np.nan
+
+        # ── Max drawdown over the window ─────────────────────────────
+        equity = (1 + ret).cumprod()
+        max_dd = float((equity / equity.cummax() - 1).min())
+
+        # ── Trend and liquidity (median = robust to spikes) ──────────
+        sma200 = float(close_all.tail(200).mean())
+        above_trend = bool(p1 > sma200)
+        recent = g.tail(TRADING_DAYS)
+        med_dollar_vol = float((recent["close"] * recent["volume"]).median())
+
+        rows.append({
+            "ticker": ticker,
+            "current_price": round(p1, 2),
+            "cagr": cagr,
+            "ann_vol": ann_vol,
+            "sharpe": sharpe,
+            "sharpe_tstat": sharpe_tstat,
+            "sortino": sortino,
+            "momentum_12_1": momentum,
+            "max_drawdown": max_dd,
+            "above_200d_trend": above_trend,
+            "med_dollar_vol": med_dollar_vol,
+            "n_obs": n,
+        })
+    return pd.DataFrame(rows)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Scoring: cross-sectional composite + GOOD/NEUTRAL/BAD verdict
+# ──────────────────────────────────────────────────────────────────────
+def _robust_z(s: pd.Series) -> pd.Series:
+    """Robust standardization via median / MAD (Huber), clipped to +/-3.
+    Falls back to mean/std when MAD is zero. NaNs filled to the median first
+    so a missing factor is neutral rather than dropping the name."""
+    s = s.astype(float)
+    s = s.fillna(s.median())
+    med = s.median()
+    mad = (s - med).abs().median()
+    scale = 1.4826 * mad                      # MAD -> std-equivalent for normal data
+    if np.isfinite(scale) and scale > 0:
+        z = (s - med) / scale
+    else:
+        sd = s.std(ddof=0)
+        z = (s - s.mean()) / sd if sd and sd > 0 else s * 0.0
+    return z.clip(-3, 3)
+
+
+def score(metrics: pd.DataFrame) -> pd.DataFrame:
+    """Cross-sectional composite of robust z-scores. The factor weights are a
+    modeling choice (not a theorem); each input statistic is computed rigorously
+    and standardized robustly so no single outlier dominates the ranking."""
+    df = metrics.copy()
+    df["composite"] = (
+        0.30 * _robust_z(df["sharpe"])
+        + 0.25 * _robust_z(df["sortino"])
+        + 0.25 * _robust_z(df["momentum_12_1"])
+        + 0.10 * _robust_z(df["max_drawdown"])      # less-negative dd scores higher
+        + 0.10 * df["above_200d_trend"].astype(float)
+    )
+    df["percentile"] = df["composite"].rank(pct=True) * 100
+    df["verdict"] = np.where(
+        df["percentile"] >= 70, "GOOD",
+        np.where(df["percentile"] <= 30, "BAD", "NEUTRAL"),
+    )
+    return df.sort_values("composite", ascending=False).reset_index(drop=True)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Portfolio: screen candidates, then max-Sharpe with shrinkage covariance
+# ──────────────────────────────────────────────────────────────────────
+def build_portfolio(scored: pd.DataFrame, bars: pd.DataFrame,
+                    top_n: int, max_weight: float) -> pd.DataFrame:
+    candidates = scored[
+        (scored["ticker"] != BENCHMARK)
+        & (scored["sharpe"] > MIN_SHARPE)
+        & (scored["sharpe_tstat"] >= MIN_SHARPE_TSTAT)     # statistically meaningful
+        & (scored["ann_vol"].between(MIN_VOL, MAX_VOL))
+        & (scored["med_dollar_vol"] > MIN_MEDIAN_DOLLAR_VOL)
+        & (scored["momentum_12_1"] > 0)
+        & (scored["max_drawdown"] > MAX_DRAWDOWN_FLOOR)
+    ].head(top_n).copy()
+
+    if len(candidates) < 2:
+        return candidates.assign(weight=1.0 / max(len(candidates), 1))
+
+    tickers = candidates["ticker"].tolist()
+    rets = (
+        bars[bars["ticker"].isin(tickers)]
+        .pivot_table(index="timestamp", columns="ticker", values="close")
+        .pct_change()
+        .tail(TRADING_DAYS)
+        .dropna(axis=1, how="all")
+        .dropna()
+    )
+    # Winsorize each column so a single bad tick cannot distort mu/cov.
+    rets = rets.apply(_winsorize, axis=0)
+    tickers = [t for t in tickers if t in rets.columns]
+    candidates = candidates[candidates["ticker"].isin(tickers)].copy()
+
+    # Markowitz (1952) mean-variance inputs, annualized and internally
+    # consistent: arithmetic mean * 252 with covariance * 252. The covariance
+    # uses Ledoit-Wolf (2004) shrinkage so the matrix is well-conditioned and
+    # invertible even when assets outnumber clean observations.
+    mu = rets[tickers].mean().values * TRADING_DAYS
+    cov = LedoitWolf().fit(rets[tickers].values).covariance_ * TRADING_DAYS
+
+    n = len(tickers)
+
+    def neg_sharpe(w):
+        port_ret = w @ mu
+        port_vol = np.sqrt(w @ cov @ w)
+        return -(port_ret - RISK_FREE_RATE) / port_vol if port_vol > 0 else 0.0
+
+    w0 = np.repeat(1 / n, n)
+    bounds = [(0.0, max_weight)] * n
+    cons = ({"type": "eq", "fun": lambda w: w.sum() - 1.0},)
+    res = minimize(neg_sharpe, w0, method="SLSQP", bounds=bounds, constraints=cons,
+                   options={"maxiter": 1000, "ftol": 1e-9})
+    weights = res.x if res.success else w0
+    weights = np.clip(weights, 0, None)
+    weights = weights / weights.sum()
+
+    candidates = candidates.set_index("ticker").loc[tickers].reset_index()
+    candidates["weight"] = weights
+    return candidates.sort_values("weight", ascending=False).reset_index(drop=True)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Why-brief generation
+# ──────────────────────────────────────────────────────────────────────
+def reason_for(row: pd.Series) -> str:
+    bits = []
+    if row["momentum_12_1"] > 0.15:
+        bits.append(f"strong 12-1 momentum +{row['momentum_12_1']*100:.0f}%")
+    elif row["momentum_12_1"] > 0:
+        bits.append(f"positive momentum +{row['momentum_12_1']*100:.0f}%")
+    if row["sharpe"] >= 1.0:
+        bits.append(f"Sharpe {row['sharpe']:.2f}")
+    if row["above_200d_trend"]:
+        bits.append("above 200d trend")
+    if row["max_drawdown"] > -0.20:
+        bits.append("shallow drawdown")
+    return ", ".join(bits) if bits else f"Sharpe {row['sharpe']:.2f}"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Reports
+# ──────────────────────────────────────────────────────────────────────
+def write_reports(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> str:
+    REPORTS_DIR.mkdir(exist_ok=True)
+    csv_path = REPORTS_DIR / f"{asof}_scores.csv"
+    md_path = REPORTS_DIR / f"{asof}_scorecard.md"
+    scored.to_csv(csv_path, index=False)
+
+    good = scored[scored["verdict"] == "GOOD"]
+    bad = scored[scored["verdict"] == "BAD"]
+    spy = scored[scored["ticker"] == BENCHMARK]
+    spy_ret = spy["cagr"].iloc[0] if len(spy) else float("nan")
+
+    lines = [
+        f"# StockSight Daily Scorecard, {asof}",
+        "",
+        f"Universe screened: {len(scored)} tickers with >= 1y history.",
+        f"GOOD: {len(good)}  |  NEUTRAL: {len(scored)-len(good)-len(bad)}  |  BAD: {len(bad)}",
+        f"Benchmark {BENCHMARK} trailing 1y return: {spy_ret*100:.1f}%",
+        "",
+        "## Top picks (best risk-adjusted names right now)",
+        "",
+        "| # | Ticker | Price | 1y CAGR | Sharpe | t-stat | Momentum | Why |",
+        "|---|--------|-------|---------|--------|--------|----------|-----|",
+    ]
+    for i, (_, r) in enumerate(good.head(10).iterrows(), 1):
+        lines.append(
+            f"| {i} | {r['ticker']} | ${r['current_price']:.2f} | "
+            f"{r['cagr']*100:.0f}% | {r['sharpe']:.2f} | {r['sharpe_tstat']:.1f} | "
+            f"{r['momentum_12_1']*100:.0f}% | {reason_for(r)} |"
+        )
+
+    lines += ["", "## Optimized portfolio (max-Sharpe, shrinkage covariance)", ""]
+    if len(portfolio):
+        lines.append("| Ticker | Weight | Sharpe | Momentum | Why |")
+        lines.append("|--------|--------|--------|----------|-----|")
+        for _, r in portfolio.iterrows():
+            lines.append(
+                f"| {r['ticker']} | {r['weight']*100:.1f}% | {r['sharpe']:.2f} | "
+                f"{r['momentum_12_1']*100:.0f}% | {reason_for(r)} |"
+            )
+    else:
+        lines.append("No names cleared the screen today.")
+
+    lines += [
+        "",
+        "## Bottom of the screen (avoid / weak)",
+        "",
+        ", ".join(bad.tail(10)["ticker"].tolist()) or "none",
+        "",
+        "## Methodology",
+        "",
+        f"- Window: trailing {TRADING_DAYS} trading days, point-in-time (no future data).",
+        "- Returns winsorized at 0.5/99.5% to neutralize bad ticks.",
+        f"- Sharpe (Sharpe 1966), annualized sqrt({TRADING_DAYS}) x daily; rf = {RISK_FREE_RATE:.0%}.",
+        f"  Portfolio requires Sharpe t-stat >= {MIN_SHARPE_TSTAT} (Lo 2002) so the edge is significant.",
+        "- Sortino (Sortino & Price 1994): downside deviation vs rf over all observations.",
+        "- Momentum: 12-1 (Jegadeesh & Titman 1993).",
+        "- Composite: robust z-scores (median/MAD, clipped +/-3); weights are a modeling choice.",
+        "- Portfolio: max-Sharpe (Markowitz 1952) with Ledoit-Wolf (2004) shrinkage covariance,",
+        "  long-only, single-weight capped. Expected returns are noisy estimates, controlled by",
+        "  shrinkage + caps + long-only constraints.",
+        "- Known limitation: universe is currently-listed names (survivorship bias affects",
+        "  backtests, not the forward pick).",
+        "",
+        "---",
+        "Analytical output, not financial advice. Past performance does not predict future results.",
+    ]
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"Wrote {csv_path.name} and {md_path.name}")
+    return md_path.read_text(encoding="utf-8")
+
+
+def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> str:
+    good = scored[scored["verdict"] == "GOOD"].head(5)
+    picks = []
+    for _, r in good.iterrows():
+        picks.append(f"{r['ticker']} (Shp {r['sharpe']:.1f}, mom {r['momentum_12_1']*100:.0f}%)")
+    port = ", ".join(f"{r['ticker']} {r['weight']*100:.0f}%" for _, r in portfolio.head(6).iterrows())
+    msg = (
+        f"StockSight {asof}\n"
+        f"Top picks: {'; '.join(picks) if picks else 'none cleared screen'}\n"
+        f"Portfolio: {port if port else 'n/a'}\n"
+        f"Why: highest trailing risk-adjusted return + positive momentum + above trend.\n"
+        f"Not advice."
+    )
+    return msg
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────────────────────────────
+def run(top_n: int = 12, max_weight: float = 0.25,
+        universe_limit: int | None = None, lookback_days: int = 420) -> str:
+    asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    end = datetime.now(timezone.utc) - timedelta(days=1)
+
+    universe = load_universe(limit=universe_limit)
+    print(f"Universe: {len(universe)} symbols")
+    bars = fetch_bars(universe, start, end)
+    metrics = compute_metrics(bars)
+    print(f"Computed metrics for {len(metrics)} tickers with sufficient history.")
+    scored = score(metrics)
+    portfolio = build_portfolio(scored, bars, top_n=top_n, max_weight=max_weight)
+    write_reports(scored, portfolio, asof)
+    sms = build_sms(scored, portfolio, asof)
+    print("\n" + "=" * 60 + "\n" + sms + "\n" + "=" * 60)
+    return sms
+
+
+def main():
+    ap = argparse.ArgumentParser(description="StockSight daily scorecard")
+    ap.add_argument("--top", type=int, default=12, help="portfolio size")
+    ap.add_argument("--max-weight", type=float, default=0.25, help="max single weight")
+    ap.add_argument("--universe-limit", type=int, default=None,
+                    help="cap universe size (for fast test runs)")
+    ap.add_argument("--lookback-days", type=int, default=420)
+    ap.add_argument("--no-notify", action="store_true", help="skip sending the text")
+    args = ap.parse_args()
+
+    sms = run(top_n=args.top, max_weight=args.max_weight,
+              universe_limit=args.universe_limit, lookback_days=args.lookback_days)
+
+    if not args.no_notify:
+        try:
+            from notify import send
+            send(sms)
+        except Exception as e:
+            print(f"Notify skipped/failed: {e}")
+
+
+if __name__ == "__main__":
+    main()
