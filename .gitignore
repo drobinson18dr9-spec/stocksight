@@ -1,6 +1,6 @@
 .env
-reports/*.csv
-reports/*.md
+reports/
+data/cache/
 __pycache__/
 *.pyc
 .venv/

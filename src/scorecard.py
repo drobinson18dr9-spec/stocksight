@@ -79,6 +79,10 @@ WARRANT_UNIT_SUFFIXES = ("WS", "WT", "WSA", "WTA", "UN", "UNA")
 
 load_dotenv(ROOT / ".env")
 
+# Public dashboard URL (GitHub Pages); overridable via env.
+DASHBOARD_URL = os.environ.get(
+    "DASHBOARD_URL", "https://drobinson18dr9-spec.github.io/stocksight/")
+
 
 # ──────────────────────────────────────────────────────────────────────
 # Universe
@@ -445,12 +449,12 @@ def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> str:
     for _, r in good.iterrows():
         picks.append(f"{r['ticker']} (Shp {r['sharpe']:.1f}, mom {r['momentum_12_1']*100:.0f}%)")
     port = ", ".join(f"{r['ticker']} {r['weight']*100:.0f}%" for _, r in portfolio.head(6).iterrows())
+    n_good = int((scored["verdict"] == "GOOD").sum())
     msg = (
-        f"StockSight {asof}\n"
-        f"Top picks: {'; '.join(picks) if picks else 'none cleared screen'}\n"
-        f"Portfolio: {port if port else 'n/a'}\n"
-        f"Why: highest trailing risk-adjusted return + positive momentum + above trend.\n"
-        f"Not advice."
+        f"StockSight {asof} — market scan done. {n_good} names rated GOOD.\n"
+        f"Sharpest movers: {', '.join(p.split(' (')[0] for p in picks) if picks else 'none cleared'}\n"
+        f"Today's portfolio: {port if port else 'n/a'}\n"
+        f"Charts + full breakdown: {DASHBOARD_URL}"
     )
     return msg
 
@@ -458,15 +462,33 @@ def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> str:
 # ──────────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────────
-def run(top_n: int = 12, max_weight: float = 0.25,
-        universe_limit: int | None = None, lookback_days: int = 420) -> str:
+CACHE_DIR = DATA_DIR / "cache"
+
+
+def get_bars(universe_limit: int | None = None, lookback_days: int = 420,
+             use_cache: bool = True) -> pd.DataFrame:
+    """Pull bars, caching to disk so charts/backtests reuse one pull.
+    Cache key = (universe_limit, lookback_days); refreshed once per day."""
+    CACHE_DIR.mkdir(exist_ok=True)
     asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    tag = f"{universe_limit or 'all'}_{lookback_days}_{asof}"
+    cache = CACHE_DIR / f"bars_{tag}.pkl"
+    if use_cache and cache.exists():
+        print(f"Loading cached bars: {cache.name}")
+        return pd.read_pickle(cache)
     start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     end = datetime.now(timezone.utc) - timedelta(days=1)
-
     universe = load_universe(limit=universe_limit)
     print(f"Universe: {len(universe)} symbols")
     bars = fetch_bars(universe, start, end)
+    bars.to_pickle(cache)
+    return bars
+
+
+def run(top_n: int = 12, max_weight: float = 0.25,
+        universe_limit: int | None = None, lookback_days: int = 420) -> str:
+    asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    bars = get_bars(universe_limit=universe_limit, lookback_days=lookback_days)
     metrics = compute_metrics(bars)
     print(f"Computed metrics for {len(metrics)} tickers with sufficient history.")
     investable = filter_investable(metrics)
