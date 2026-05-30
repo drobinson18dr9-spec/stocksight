@@ -341,8 +341,9 @@ def hrp_weights(rets: pd.DataFrame) -> pd.Series:
 # Portfolio: screen candidates, then weight with HRP (capped)
 # ──────────────────────────────────────────────────────────────────────
 def build_portfolio(scored: pd.DataFrame, bars: pd.DataFrame,
-                    top_n: int, max_weight: float) -> pd.DataFrame:
-    candidates = scored[
+                    top_n: int, max_weight: float,
+                    apply_sentiment_veto: bool = True) -> pd.DataFrame:
+    pool = scored[
         (scored["ticker"] != BENCHMARK)
         & (scored["sharpe"] > MIN_SHARPE)
         & (scored["sharpe_tstat"] >= MIN_SHARPE_TSTAT)     # statistically meaningful
@@ -350,8 +351,19 @@ def build_portfolio(scored: pd.DataFrame, bars: pd.DataFrame,
         & (scored["med_dollar_vol"] > MIN_MEDIAN_DOLLAR_VOL)
         & (scored["momentum_12_1"] > 0)
         & (scored["max_drawdown"] > MAX_DRAWDOWN_FLOOR)
-    ].head(top_n).copy()
+    ].head(top_n * 2 + 4).copy()
 
+    # Event-risk veto: drop names whose live news turned sharply negative, then
+    # backfill from the next-best screened names (keeps the book fluid).
+    if apply_sentiment_veto and len(pool):
+        try:
+            from sentiment import apply_veto
+            pool, _ = apply_veto(pool)
+        except Exception as e:
+            print(f"Sentiment veto skipped: {e}")
+            pool["news_sentiment"] = 0.0
+
+    candidates = pool.head(top_n).copy()
     if len(candidates) < 2:
         return candidates.assign(weight=1.0 / max(len(candidates), 1))
 

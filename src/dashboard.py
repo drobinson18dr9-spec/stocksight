@@ -113,11 +113,15 @@ def build(universe_limit=None):
     # ── Picks table ─────────────────────────────────────────────────────
     rows = ""
     for i, (_, r) in enumerate(portfolio.iterrows(), 1):
+        ns = r.get("news_sentiment", 0.0)
+        ns = 0.0 if pd.isna(ns) else ns
+        tone = "#1a9850" if ns > 0.05 else ("#d73027" if ns < -0.05 else "#666")
         rows += (f"<tr><td>{i}</td><td><b>{r['ticker']}</b></td><td>{r['weight']*100:.1f}%</td>"
                  f"<td>${r['current_price']:.2f}</td><td>{r['sharpe']:.2f}</td>"
-                 f"<td>{r['momentum_12_1']*100:.0f}%</td></tr>")
+                 f"<td>{r['momentum_12_1']*100:.0f}%</td>"
+                 f"<td style='color:{tone}'>{ns:+.2f}</td></tr>")
     table = f"""<table>
-      <tr><th>#</th><th>Ticker</th><th>Weight</th><th>Price</th><th>Sharpe</th><th>Momentum (1yr)</th></tr>
+      <tr><th>#</th><th>Ticker</th><th>Weight</th><th>Price</th><th>Sharpe</th><th>Momentum (1yr)</th><th>News tone</th></tr>
       {rows}</table>"""
 
     # ── Assemble page ───────────────────────────────────────────────────
