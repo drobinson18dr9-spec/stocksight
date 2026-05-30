@@ -90,7 +90,36 @@ DASHBOARD_URL = os.environ.get(
 # ──────────────────────────────────────────────────────────────────────
 # Universe
 # ──────────────────────────────────────────────────────────────────────
-def load_universe(limit: int | None = None) -> list[str]:
+def alpaca_active_symbols() -> set:
+    """Live Alpaca active US-equity symbols (tradable, non-OTC, simple symbols),
+    matching the original notebook's universe merge. Cached daily; fails to an
+    empty set so the CSV universe is always available."""
+    CACHE_DIR.mkdir(exist_ok=True)
+    asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    cache = CACHE_DIR / f"alpaca_universe_{asof}.pkl"
+    if cache.exists():
+        return set(pd.read_pickle(cache))
+    syms = set()
+    try:
+        from alpaca.trading.client import TradingClient
+        from alpaca.trading.requests import GetAssetsRequest
+        from alpaca.trading.enums import AssetClass, AssetStatus
+        client = TradingClient(os.environ["ALPACA_API_KEY"],
+                               os.environ["ALPACA_API_SECRET"], paper=True)
+        for a in client.get_all_assets(GetAssetsRequest(
+                asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE)):
+            s = a.symbol.upper().strip()
+            if (a.tradable and "." not in a.symbol and a.exchange != "OTC"
+                    and s.isalpha() and 1 <= len(s) <= 5
+                    and not s.endswith(WARRANT_UNIT_SUFFIXES)):
+                syms.add(s)
+        pd.to_pickle(syms, cache)
+    except Exception as e:
+        print(f"Alpaca asset list unavailable ({e}); using CSV universe only.")
+    return syms
+
+
+def load_universe(limit: int | None = None, include_alpaca: bool = True) -> list[str]:
     df = pd.read_excel(TICKER_FILE)
     col = next((c for c in ["Ticker", "Ticker Symbol", "Symbol", "symbol", "ticker"]
                 if c in df.columns), df.columns[0])
@@ -98,10 +127,10 @@ def load_universe(limit: int | None = None) -> list[str]:
         df[col].astype(str).str.upper().str.strip()
         .loc[lambda s: s.str.match(r"^[A-Z]+$", na=False)]
     )
-    cleaned = sorted({
-        s for s in syms
-        if not s.endswith(WARRANT_UNIT_SUFFIXES) and 1 <= len(s) <= 5
-    })
+    universe = {s for s in syms if not s.endswith(WARRANT_UNIT_SUFFIXES) and 1 <= len(s) <= 5}
+    if include_alpaca:
+        universe |= alpaca_active_symbols()      # merge full live Alpaca universe (~13k)
+    cleaned = sorted(universe)
     if limit:
         cleaned = cleaned[:limit]
     if BENCHMARK not in cleaned:

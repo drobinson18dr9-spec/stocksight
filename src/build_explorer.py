@@ -76,8 +76,17 @@ def main(tickers=None, test_days=20, horizon=15):
         except Exception as e:
             print(f"  {t}: failed ({e})")
 
-    (ASSET_DIR / "index.json").write_text(json.dumps({"tickers": done}), encoding="utf-8")
-    print(f"Wrote {len(done)} forecast files to {ASSET_DIR}")
+    # Merge into the existing index so on-demand-requested tickers persist
+    existing = []
+    idx = ASSET_DIR / "index.json"
+    if idx.exists():
+        try:
+            existing = json.loads(idx.read_text()).get("tickers", [])
+        except Exception:
+            existing = []
+    all_tickers = sorted(set(existing) | set(done))
+    idx.write_text(json.dumps({"tickers": all_tickers}), encoding="utf-8")
+    print(f"Wrote {len(done)} forecast files; index now {len(all_tickers)} tickers")
 
 
 if __name__ == "__main__":

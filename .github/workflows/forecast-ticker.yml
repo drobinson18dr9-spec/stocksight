@@ -1,0 +1,65 @@
+name: Forecast a ticker (on demand)
+
+# Pick ANY ticker from the full universe and add its prediction to the
+# dashboard. Run from the Actions tab: "Run workflow" -> type a ticker.
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "Ticker symbol (any US equity, e.g. TSLA)"
+        required: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Compute forecast for requested ticker
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+        run: python src/build_explorer.py --tickers "${{ inputs.ticker }}" --test-days 20 --horizon 15
+
+      - name: Rebuild dashboard + explorer
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+        run: python src/dashboard.py
+
+      - name: Persist the new forecast back to the repo
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add assets/predict
+          git commit -m "On-demand forecast: ${{ inputs.ticker }}" || echo "no change"
+          git push || echo "push skipped"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: reports/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
