@@ -19,6 +19,8 @@ import pandas as pd
 import plotly.graph_objects as go
 
 import scorecard as sc
+import fundamentals as fund
+import macro as macro_mod
 
 SITE = Path(__file__).resolve().parents[1] / "reports" / "site"
 REPORTS = Path(__file__).resolve().parents[1] / "reports"
@@ -38,6 +40,8 @@ def build(universe_limit=None):
     scored = sc.score(investable)
     portfolio = sc.build_portfolio(scored, bars, top_n=12, max_weight=0.25)
     asof = bars["timestamp"].max().strftime("%Y-%m-%d")
+    funds = fund.get(portfolio["ticker"].tolist())
+    mac = macro_mod.get()
 
     good = scored[scored["verdict"] == "GOOD"]
     bad = scored[scored["verdict"] == "BAD"]
@@ -124,9 +128,43 @@ def build(universe_limit=None):
       <tr><th>#</th><th>Ticker</th><th>Weight</th><th>Price</th><th>Sharpe</th><th>Momentum (1yr)</th><th>News tone</th></tr>
       {rows}</table>"""
 
+    # Fundamentals table (yfinance: valuation, quality, analyst targets)
+    fmap = funds.set_index("ticker") if len(funds) else None
+
+    def _fv(t, col, pct=False):
+        if fmap is None or t not in fmap.index:
+            return "-"
+        v = fmap.loc[t].get(col)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "-"
+        if pct:
+            return f"{v*100:.1f}%"
+        return f"{v:.2f}" if isinstance(v, (int, float)) else str(v)
+
+    frows = ""
+    for _, r in portfolio.iterrows():
+        t = r["ticker"]
+        rating = fmap.loc[t].get("recommendationKey") if (fmap is not None and t in fmap.index) else None
+        frows += (f"<tr><td><b>{t}</b></td><td>{_fv(t,'trailingPE')}</td>"
+                  f"<td>{_fv(t,'profitMargins',pct=True)}</td><td>{_fv(t,'returnOnEquity',pct=True)}</td>"
+                  f"<td>{_fv(t,'revenueGrowth',pct=True)}</td><td>{_fv(t,'analyst_upside',pct=True)}</td>"
+                  f"<td>{rating or '-'}</td><td>{_fv(t,'quality_score')}</td></tr>")
+    fund_table = (f"<h3 style='margin:6px 10px'>Fundamentals & analyst view (free, yfinance)</h3>"
+                  f"<table><tr><th>Ticker</th><th>P/E</th><th>Margin</th><th>ROE</th>"
+                  f"<th>Rev growth</th><th>Analyst upside</th><th>Rating</th><th>Quality</th></tr>{frows}</table>")
+
+    # Macro banner
+    def _mv(k, suffix=""):
+        v = mac.get(k)
+        return f"{v}{suffix}" if v is not None else "n/a"
+    macro_banner = (f"Macro: 10y {_mv('treasury_10y','%')} | 3m {_mv('tbill_3m','%')} | "
+                    f"10y-3m curve {_mv('yield_curve_spread')} | VIX {_mv('vix')} | "
+                    f"regime <b>{mac.get('regime','?')}</b> ({mac.get('regime_reason','')})")
+
     # ── Assemble page ───────────────────────────────────────────────────
-    tabs = [("picks", "Portfolio picks"), ("risk", "Risk vs Return"),
-            ("vsspy", "Picks vs SPY"), ("weights", "Weights"), ("spread", "Score spread")]
+    tabs = [("picks", "Portfolio picks"), ("fundamentals", "Fundamentals"),
+            ("risk", "Risk vs Return"), ("vsspy", "Picks vs SPY"),
+            ("weights", "Weights"), ("spread", "Score spread")]
     if bt_div:
         tabs.append(("backtest", "Backtest"))
     tab_btns = "".join(f"<button onclick=\"show('{tid}')\">{label}</button>" for tid, label in tabs)
@@ -153,6 +191,7 @@ def build(universe_limit=None):
 <header>
   <h1>StockSight Daily Scorecard</h1>
   <p>{asof} · {len(scored)} investable names screened · SPY trailing 1y {spy_ret:.0f}%</p>
+  <p style="font-size:13px">{macro_banner}</p>
 </header>
 <div class="summary">
   <div class="card"><div class="n good">{len(good)}</div>GOOD</div>
@@ -162,6 +201,7 @@ def build(universe_limit=None):
 </div>
 <div class="tabs">{tab_btns}<a href="forecasts.html" style="text-decoration:none"><button style="background:#0f1b3d;color:#fff">Model Forecasts &rarr;</button></a></div>
 <div id="picks" class="chart"><h3 style="margin:6px 10px">Optimized portfolio</h3>{table}</div>
+<div id="fundamentals" class="chart">{fund_table}</div>
 <div id="risk" class="chart">{_div(f1, first=True)}</div>
 <div id="vsspy" class="chart">{_div(f2)}</div>
 <div id="weights" class="chart">{_div(f3)}</div>

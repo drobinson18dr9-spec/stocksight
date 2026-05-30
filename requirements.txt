@@ -13,3 +13,4 @@ feedparser>=6.0
 statsmodels>=0.14
 arch>=6.0
 xgboost>=2.0
+yfinance>=0.2.40
