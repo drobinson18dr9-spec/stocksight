@@ -5,7 +5,6 @@ name: Daily Scorecard
 on:
   schedule:
     - cron: "0 15 * * 1-5"    # Mon-Fri 15:00 UTC = 08:00 PDT
-    - cron: "55 8 * * *"      # TEMP proof run today 08:55 UTC (remove after it fires)
   workflow_dispatch: {}        # run manually from the Actions tab
 
 permissions:

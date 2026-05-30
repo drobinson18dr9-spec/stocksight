@@ -39,6 +39,8 @@ import pandas as pd
 from dotenv import load_dotenv
 from sklearn.covariance import LedoitWolf
 from scipy.optimize import minimize
+from scipy.cluster.hierarchy import linkage
+from scipy.spatial.distance import squareform
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
@@ -291,7 +293,52 @@ def score(metrics: pd.DataFrame) -> pd.DataFrame:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Portfolio: screen candidates, then max-Sharpe with shrinkage covariance
+# Hierarchical Risk Parity (Lopez de Prado 2016). Stable allocator that
+# beats Markowitz max-Sharpe out-of-sample in our Stage 2 test (higher
+# Sharpe, far lower drawdown) because it avoids covariance inversion.
+# ──────────────────────────────────────────────────────────────────────
+def _quasi_diag(link):
+    link = link.astype(int)
+    s = pd.Series([link[-1, 0], link[-1, 1]])
+    n = link[-1, 3]
+    while s.max() >= n:
+        s.index = range(0, s.shape[0] * 2, 2)
+        df0 = s[s >= n]
+        i, j = df0.index, df0.values - n
+        s[i] = link[j, 0]
+        s = pd.concat([s, pd.Series(link[j, 1], index=i + 1)]).sort_index()
+        s.index = range(s.shape[0])
+    return s.tolist()
+
+
+def _cluster_var(cov, items):
+    c = cov.loc[items, items]
+    iv = 1.0 / np.diag(c)
+    iv /= iv.sum()
+    return float(iv @ c.values @ iv)
+
+
+def hrp_weights(rets: pd.DataFrame) -> pd.Series:
+    cov, corr = rets.cov(), rets.corr()
+    dist = ((1 - corr) / 2.0) ** 0.5
+    link = linkage(squareform(dist.values, checks=False), "single")
+    order = [corr.index[i] for i in _quasi_diag(link)]
+    w = pd.Series(1.0, index=order)
+    clusters = [order]
+    while clusters:
+        clusters = [c[j:k] for c in clusters for j, k in
+                    ((0, len(c) // 2), (len(c) // 2, len(c))) if len(c) > 1]
+        for i in range(0, len(clusters), 2):
+            c0, c1 = clusters[i], clusters[i + 1]
+            v0, v1 = _cluster_var(cov, c0), _cluster_var(cov, c1)
+            alpha = 1 - v0 / (v0 + v1)
+            w[c0] *= alpha
+            w[c1] *= 1 - alpha
+    return w.reindex(rets.columns)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Portfolio: screen candidates, then weight with HRP (capped)
 # ──────────────────────────────────────────────────────────────────────
 def build_portfolio(scored: pd.DataFrame, bars: pd.DataFrame,
                     top_n: int, max_weight: float) -> pd.DataFrame:
@@ -322,28 +369,15 @@ def build_portfolio(scored: pd.DataFrame, bars: pd.DataFrame,
     tickers = [t for t in tickers if t in rets.columns]
     candidates = candidates[candidates["ticker"].isin(tickers)].copy()
 
-    # Markowitz (1952) mean-variance inputs, annualized and internally
-    # consistent: arithmetic mean * 252 with covariance * 252. The covariance
-    # uses Ledoit-Wolf (2004) shrinkage so the matrix is well-conditioned and
-    # invertible even when assets outnumber clean observations.
-    mu = rets[tickers].mean().values * TRADING_DAYS
-    cov = LedoitWolf().fit(rets[tickers].values).covariance_ * TRADING_DAYS
-
-    n = len(tickers)
-
-    def neg_sharpe(w):
-        port_ret = w @ mu
-        port_vol = np.sqrt(w @ cov @ w)
-        return -(port_ret - RISK_FREE_RATE) / port_vol if port_vol > 0 else 0.0
-
-    w0 = np.repeat(1 / n, n)
-    bounds = [(0.0, max_weight)] * n
-    cons = ({"type": "eq", "fun": lambda w: w.sum() - 1.0},)
-    res = minimize(neg_sharpe, w0, method="SLSQP", bounds=bounds, constraints=cons,
-                   options={"maxiter": 1000, "ftol": 1e-9})
-    weights = res.x if res.success else w0
-    weights = np.clip(weights, 0, None)
-    weights = weights / weights.sum()
+    # Hierarchical Risk Parity (Lopez de Prado 2016). Chosen over Markowitz
+    # max-Sharpe because our out-of-sample Stage 2 test showed HRP delivers a
+    # materially higher Sharpe and far smaller drawdown; Markowitz overfits the
+    # covariance. Weights are then capped and renormalized.
+    w = hrp_weights(rets[tickers]).reindex(tickers).fillna(0.0).values
+    w = np.clip(w, 0, max_weight)
+    if w.sum() <= 0:
+        w = np.repeat(1.0 / len(tickers), len(tickers))
+    weights = w / w.sum()
 
     candidates = candidates.set_index("ticker").loc[tickers].reset_index()
     candidates["weight"] = weights
