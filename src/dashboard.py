@@ -240,111 +240,88 @@ def build_forecasts():
         return
     SITE.mkdir(parents=True, exist_ok=True)
 
-    blocks, first = [], True
+    import shutil
+    # Serve each ticker's compact data file from our own site; the chart is
+    # drawn client-side on selection (so the page stays small and can offer
+    # the whole universe without pre-rendering thousands of charts).
+    site_pred = SITE / "predict"
+    site_pred.mkdir(parents=True, exist_ok=True)
+    served = []
     for t in tickers:
         f = pred_dir / f"{t}.json"
-        if not f.exists():
-            continue
-        d = json.loads(f.read_text())
-        models = d["models"]
-        wf = pd.DataFrame(d["walk_forward"]); wf["date"] = pd.to_datetime(wf["date"])
-        fwd = pd.DataFrame(d["forward"]); fwd["date"] = pd.to_datetime(fwd["date"])
-        em = pd.DataFrame(d["error_metrics"])
-
-        fig = go.Figure()
-        fig.add_scatter(x=wf["date"], y=wf["actual"], name="ACTUAL",
-                        line=dict(color="black", width=3))
-        for mname in models:
-            fig.add_scatter(x=wf["date"], y=wf[mname], name=mname, line=dict(width=1.2))
-            fig.add_scatter(x=fwd["date"], y=fwd[mname], name=mname + " (fwd)",
-                            line=dict(width=1, dash="dot"), showlegend=False)
-        fig.add_scatter(x=fwd["date"], y=fwd["ensemble_mean"], name="Ensemble (forecast)",
-                        line=dict(color="red", width=2.5, dash="dash"))
-        fig.update_layout(title=f"{t}: actual vs model predictions (dotted = future forecast)",
-                          template="plotly_white", height=520, yaxis_title="Price ($)")
-
-        # error metrics table
-        em_rows = "".join(
-            f"<tr><td>{r['model']}</td><td>{r['MAE']}</td><td>{r['RMSE']}</td>"
-            f"<td>{r['MAPE_%']}%</td><td>{r['DirAcc_%']}%</td></tr>"
-            for _, r in em.iterrows())
-        em_tbl = (f"<h4>Model accuracy (walk-forward backtest)</h4><table>"
-                  f"<tr><th>Model</th><th>MAE</th><th>RMSE</th><th>MAPE</th><th>Dir. acc</th></tr>"
-                  f"{em_rows}</table>")
-
-        # forward forecast table
-        fcols = models + ["ensemble_mean"]
-        fhead = "".join(f"<th>{c}</th>" for c in fcols)
-        frows = "".join("<tr><td>" + r["date"].strftime("%Y-%m-%d") + "</td>" +
-                        "".join(f"<td>{r[c]:.2f}</td>" for c in fcols) + "</tr>"
-                        for _, r in fwd.iterrows())
-        f_tbl = (f"<h4>Forward forecast (future dates, no actuals exist)</h4><table>"
-                 f"<tr><th>Date</th>{fhead}</tr>{frows}</table>")
-
-        # actual vs predicted vs variance (last 8 backtest days)
-        recent = wf.tail(8)
-        vhead = "".join(f"<th>{m}</th><th>&Delta;{m}</th>" for m in models)
-        vrows = ""
-        for _, r in recent.iterrows():
-            cells = "".join(
-                f"<td>{r[m]:.2f}</td><td style='color:#888'>{r['var_'+m]:+.2f}</td>"
-                for m in models)
-            vrows += (f"<tr><td>{r['date'].strftime('%Y-%m-%d')}</td>"
-                      f"<td><b>{r['actual']:.2f}</b></td>{cells}</tr>")
-        v_tbl = (f"<h4>Actual vs predicted vs variance (&Delta; = actual - predicted)</h4>"
-                 f"<div style='overflow-x:auto'><table><tr><th>Date</th><th>Actual</th>{vhead}</tr>"
-                 f"{vrows}</table></div>")
-
-        chart_div = fig.to_html(full_html=False,
-                                include_plotlyjs="cdn" if first else False,
-                                config={"responsive": True, "displaylogo": False})
-        first = False
-        blocks.append(f"<div class='tk' id='tk_{t}'>{chart_div}{em_tbl}{f_tbl}{v_tbl}</div>")
+        if f.exists():
+            shutil.copy(f, site_pred / f"{t}.json")
+            served.append(t)
+    (site_pred / "index.json").write_text(json.dumps({"tickers": served}), encoding="utf-8")
 
     all_syms = sorted(set(sc.load_universe()))
     datalist = "".join(f"<option value='{t}'></option>" for t in all_syms)
-    pre_js = "[" + ",".join(f"'{t}'" for t in tickers) + "]"
-    first = tickers[0] if tickers else ""
-    wf_url = "https://github.com/drobinson18dr9-spec/stocksight/actions/workflows/forecast-ticker.yml"
+    pre_js = "[" + ",".join(f'"{t}"' for t in served) + "]"
+    first = served[0] if served else ""
     page = f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>StockSight Forecasts</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
  body{{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f7f8fa;color:#1a1a2e}}
  header{{background:#0f1b3d;color:#fff;padding:16px 22px}} header a{{color:#9ec5ff}}
- .bar{{padding:14px 22px}} input{{font-size:16px;padding:8px 12px;border-radius:8px;border:1px solid #ccc;width:240px}}
- .tk{{display:none;margin:0 22px 22px;background:#fff;border-radius:10px;padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
+ .bar{{padding:14px 22px}} input{{font-size:16px;padding:8px 12px;border-radius:8px;border:1px solid #ccc;width:260px}}
+ .card{{margin:0 22px 22px;background:#fff;border-radius:10px;padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
  table{{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0 16px}}
  th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #eee}} th{{background:#f0f2f7}}
- h4{{margin:14px 6px 4px}} button{{border:0;padding:9px 14px;border-radius:8px;cursor:pointer}}
+ h4{{margin:14px 6px 4px}} #msg{{margin:0 22px;color:#a33}}
 </style></head><body>
 <header><h1>StockSight Forecasts explorer</h1>
 <p><a href="index.html">&larr; back to scorecard</a> &middot; type any of {len(all_syms)} tickers. Dotted lines and the forward table are future predictions (no actuals yet).</p></header>
 <div class="bar"><label>Ticker: </label>
   <input id="picker" list="alltickers" placeholder="type a symbol, e.g. AAPL" autocomplete="off" value="{first}">
   <datalist id="alltickers">{datalist}</datalist>
-  <span style="margin-left:10px;color:#666">{len(tickers)} precomputed; any other can be requested in 1 click</span>
+  <span style="margin-left:10px;color:#666">{len(served)} loaded; more added each run</span>
 </div>
-{''.join(blocks)}
-<div id="tk__request" class="tk"><h3>Forecast not precomputed for <span id="reqsym"></span></h3>
-  <p>A static page can't run the models live, so predictions for this ticker are computed on demand.
-  Click below, press "Run workflow", enter the symbol, and it appears here in ~5 minutes.</p>
-  <p><a href="{wf_url}" target="_blank"><button style="background:#0f1b3d;color:#fff">Compute this forecast &rarr;</button></a></p></div>
+<div id="msg"></div>
+<div class="card" id="chartcard"><div id="chart" style="height:520px"></div></div>
+<div class="card" id="tables"></div>
 <script>
  var PRE = {pre_js};
+ function fmt(v){{return (v==null||isNaN(v))?'-':Number(v).toFixed(2);}}
+ function render(d){{
+   document.getElementById('msg').textContent='';
+   var M=d.models, wf=d.walk_forward, fwd=d.forward, traces=[];
+   traces.push({{x:wf.map(r=>r.date),y:wf.map(r=>r.actual),name:'ACTUAL',mode:'lines',line:{{color:'black',width:3}}}});
+   M.forEach(m=>{{
+     traces.push({{x:wf.map(r=>r.date),y:wf.map(r=>r[m]),name:m,mode:'lines',line:{{width:1.3}}}});
+     traces.push({{x:fwd.map(r=>r.date),y:fwd.map(r=>r[m]),name:m+' fwd',mode:'lines',line:{{width:1,dash:'dot'}},showlegend:false}});
+   }});
+   traces.push({{x:fwd.map(r=>r.date),y:fwd.map(r=>r.ensemble_mean),name:'Ensemble (forecast)',mode:'lines',line:{{color:'red',width:2.5,dash:'dash'}}}});
+   Plotly.newPlot('chart',traces,{{title:d.ticker+': actual vs model predictions (dotted = future forecast)',template:'plotly_white',yaxis:{{title:'Price ($)'}},margin:{{t:40}}}},{{responsive:true,displaylogo:false}});
+   var em='<h4>Model accuracy (walk-forward backtest)</h4><table><tr><th>Model</th><th>MAE</th><th>RMSE</th><th>MAPE</th><th>Dir. acc</th></tr>';
+   d.error_metrics.forEach(r=>{{em+='<tr><td>'+r.model+'</td><td>'+r.MAE+'</td><td>'+r.RMSE+'</td><td>'+r['MAPE_%']+'%</td><td>'+r['DirAcc_%']+'%</td></tr>';}});
+   em+='</table>';
+   var fcols=M.concat(['ensemble_mean']);
+   var ft='<h4>Forward forecast (future dates, no actuals exist)</h4><table><tr><th>Date</th>'+fcols.map(c=>'<th>'+c+'</th>').join('')+'</tr>';
+   fwd.forEach(r=>{{ft+='<tr><td>'+r.date+'</td>'+fcols.map(c=>'<td>'+fmt(r[c])+'</td>').join('')+'</tr>';}});
+   ft+='</table>';
+   var rec=wf.slice(-8), vh=M.map(m=>'<th>'+m+'</th><th>&Delta;'+m+'</th>').join('');
+   var vt='<h4>Actual vs predicted vs variance (&Delta; = actual - predicted)</h4><div style="overflow-x:auto"><table><tr><th>Date</th><th>Actual</th>'+vh+'</tr>';
+   rec.forEach(r=>{{vt+='<tr><td>'+r.date+'</td><td><b>'+fmt(r.actual)+'</b></td>'+M.map(m=>{{var v=r['var_'+m];return '<td>'+fmt(r[m])+'</td><td style="color:#888">'+(v==null?'-':(v>=0?'+':'')+Number(v).toFixed(2))+'</td>';}}).join('')+'</tr>';}});
+   vt+='</table></div>';
+   document.getElementById('tables').innerHTML=em+ft+vt;
+ }}
  function show(t){{
    t=(t||'').toUpperCase().trim();
-   document.querySelectorAll('.tk').forEach(e=>e.style.display='none');
-   var el=document.getElementById('tk_'+t);
-   if(el){{el.style.display='block'; window.dispatchEvent(new Event('resize'));}}
-   else if(t){{document.getElementById('reqsym').textContent=t;
-               document.getElementById('tk__request').style.display='block';}}
+   if(PRE.indexOf(t)>=0){{
+     fetch('predict/'+t+'.json').then(r=>r.json()).then(render)
+       .catch(e=>{{document.getElementById('msg').textContent='Could not load '+t;}});
+   }} else {{
+     Plotly.purge('chart'); document.getElementById('tables').innerHTML='';
+     document.getElementById('msg').textContent = t ? ('No forecast loaded for '+t+' yet. The set expands automatically each run.') : '';
+   }}
  }}
- document.getElementById('picker').addEventListener('change', function(){{show(this.value);}});
+ document.getElementById('picker').addEventListener('change',function(){{show(this.value);}});
  show('{first}');
 </script></body></html>"""
     (SITE / "forecasts.html").write_text(page, encoding="utf-8")
-    print(f"Wrote forecasts explorer: {len(tickers)} tickers")
+    print(f"Wrote forecasts explorer (client-side): {len(served)} tickers served")
 
 
 if __name__ == "__main__":
