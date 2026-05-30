@@ -58,7 +58,7 @@ def build(universe_limit=None):
         f1.add_scatter(x=spy["ann_vol"]*100, y=spy["cagr"]*100, mode="markers", name="SPY",
                        marker=dict(size=18, color="black", symbol="star"), text=["SPY"],
                        hovertemplate="<b>SPY</b><br>vol %{x:.0f}%<br>return %{y:.0f}%<extra></extra>")
-    f1.update_layout(title="Risk vs return (trailing 1y) — hover any dot",
+    f1.update_layout(title="Risk vs return (trailing 1y), hover any dot",
                      xaxis_title="Annualized volatility (%)", yaxis_title="Annualized return (%)",
                      yaxis_range=[-100, min(float(scored["cagr"].quantile(0.99)*100), 400)],
                      template="plotly_white", height=560)
@@ -129,7 +129,7 @@ def build(universe_limit=None):
 
     html = f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>StockSight — {asof}</title>
+<title>StockSight, {asof}</title>
 <style>
  body{{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f7f8fa;color:#1a1a2e}}
  header{{background:#0f1b3d;color:#fff;padding:18px 22px}}
