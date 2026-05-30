@@ -62,13 +62,18 @@ BENCHMARK = "SPY"
 # Return winsorization (guards against bad ticks / data errors)
 WINSOR_LO, WINSOR_HI = 0.005, 0.995
 
-# Liquidity / sanity screen thresholds
+# Investability filters (applied BEFORE scoring so the GOOD/BAD ranking and
+# the displayed picks reflect only tradeable names, not data-noise micro-caps
+# or hyper-volatile leveraged ETFs).
+MIN_PRICE = 5.00                    # drop sub-$5 names (wide spreads, manipulation, noise)
+MAX_VOL = 0.80                      # annualized vol ceiling (removes 2x/3x ETFs, blowups)
+MIN_VOL = 0.05                      # floor (removes dead/illiquid names)
+MIN_MEDIAN_DOLLAR_VOL = 5_000_000   # >= $5M median daily traded (liquidity)
+
+# Portfolio-eligibility thresholds (on top of investability)
 MIN_SHARPE = 0.30
-MAX_VOL = 0.80
-MIN_VOL = 0.05
-MIN_MEDIAN_DOLLAR_VOL = 5_000_000   # >= $5M median daily traded
 MAX_DRAWDOWN_FLOOR = -0.50          # reject names that fell >50% peak-to-trough
-MIN_SHARPE_TSTAT = 1.5              # Sharpe must be ~marginally significant for the portfolio
+MIN_SHARPE_TSTAT = 1.5             # Sharpe must be ~marginally significant for the portfolio
 
 WARRANT_UNIT_SUFFIXES = ("WS", "WT", "WSA", "WTA", "UN", "UNA")
 
@@ -247,6 +252,19 @@ def _robust_z(s: pd.Series) -> pd.Series:
     return z.clip(-3, 3)
 
 
+def filter_investable(metrics: pd.DataFrame) -> pd.DataFrame:
+    """Keep only tradeable names before ranking. These bounds are economically
+    grounded (price, liquidity, volatility), not arbitrary return caps: they
+    remove sub-$5 noise, illiquid micro-caps, and hyper-volatile leveraged
+    products whose trailing statistics are not investable signal."""
+    keep = metrics[
+        (metrics["current_price"] >= MIN_PRICE)
+        & (metrics["ann_vol"].between(MIN_VOL, MAX_VOL))
+        & (metrics["med_dollar_vol"] >= MIN_MEDIAN_DOLLAR_VOL)
+    ].copy()
+    return keep
+
+
 def score(metrics: pd.DataFrame) -> pd.DataFrame:
     """Cross-sectional composite of robust z-scores. The factor weights are a
     modeling choice (not a theorem); each input statistic is computed rigorously
@@ -399,6 +417,8 @@ def write_reports(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> s
         "## Methodology",
         "",
         f"- Window: trailing {TRADING_DAYS} trading days, point-in-time (no future data).",
+        f"- Investable filter before ranking: price >= ${MIN_PRICE:.0f}, "
+        f"vol in [{MIN_VOL:.0%}, {MAX_VOL:.0%}], median dollar-volume >= ${MIN_MEDIAN_DOLLAR_VOL/1e6:.0f}M.",
         "- Returns winsorized at 0.5/99.5% to neutralize bad ticks.",
         f"- Sharpe (Sharpe 1966), annualized sqrt({TRADING_DAYS}) x daily; rf = {RISK_FREE_RATE:.0%}.",
         f"  Portfolio requires Sharpe t-stat >= {MIN_SHARPE_TSTAT} (Lo 2002) so the edge is significant.",
@@ -449,7 +469,9 @@ def run(top_n: int = 12, max_weight: float = 0.25,
     bars = fetch_bars(universe, start, end)
     metrics = compute_metrics(bars)
     print(f"Computed metrics for {len(metrics)} tickers with sufficient history.")
-    scored = score(metrics)
+    investable = filter_investable(metrics)
+    print(f"Investable after price/liquidity/vol filters: {len(investable)} tickers.")
+    scored = score(investable)
     portfolio = build_portfolio(scored, bars, top_n=top_n, max_weight=max_weight)
     write_reports(scored, portfolio, asof)
     sms = build_sms(scored, portfolio, asof)
