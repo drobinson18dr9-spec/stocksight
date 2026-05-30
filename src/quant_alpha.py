@@ -105,7 +105,9 @@ def deflated_sharpe(sr: float, n: int, sk: float, ku: float, n_trials: int,
 # ──────────────────────────────────────────────────────────────────────
 def run(years: int = 6, horizon: int = 21, trials: int = 10, top_q: float = 0.2):
     import xgboost as xgb
-    bars = sc.get_bars(lookback_days=2225)   # reuse the existing ~6y cache
+    # Full history on the investable/curated universe (illiquid micro-caps get
+    # filtered anyway, so pulling all ~13.5k would only add filtered noise).
+    bars = sc.get_bars(lookback_days=int(years * 365) + 90, include_alpaca=False)
     panel, close = build_panel(bars, horizon)
     feat_cols = ["mom_12_1", "reversal_1m", "vol_60", "sharpe_252", "trend_200", "dd_252", "vol_trend"]
 

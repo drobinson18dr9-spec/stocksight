@@ -590,19 +590,19 @@ def get_company_names() -> dict:
 
 
 def get_bars(universe_limit: int | None = None, lookback_days: int = 420,
-             use_cache: bool = True) -> pd.DataFrame:
+             use_cache: bool = True, include_alpaca: bool = True) -> pd.DataFrame:
     """Pull bars, caching to disk so charts/backtests reuse one pull.
-    Cache key = (universe_limit, lookback_days); refreshed once per day."""
+    Cache key = (universe_limit, lookback_days, include_alpaca); daily refresh."""
     CACHE_DIR.mkdir(exist_ok=True)
     asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
-    tag = f"{universe_limit or 'all'}_{lookback_days}_{asof}"
+    tag = f"{universe_limit or 'all'}_{lookback_days}_{'fa' if include_alpaca else 'csv'}_{asof}"
     cache = CACHE_DIR / f"bars_{tag}.pkl"
     if use_cache and cache.exists():
         print(f"Loading cached bars: {cache.name}")
         return pd.read_pickle(cache)
     start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     end = datetime.now(timezone.utc) - timedelta(days=1)
-    universe = load_universe(limit=universe_limit)
+    universe = load_universe(limit=universe_limit, include_alpaca=include_alpaca)
     print(f"Universe: {len(universe)} symbols")
     bars = fetch_bars(universe, start, end)
     bars.to_pickle(cache)
