@@ -117,7 +117,7 @@ def build(universe_limit=None):
                  f"<td>${r['current_price']:.2f}</td><td>{r['sharpe']:.2f}</td>"
                  f"<td>{r['momentum_12_1']*100:.0f}%</td></tr>")
     table = f"""<table>
-      <tr><th>#</th><th>Ticker</th><th>Weight</th><th>Price</th><th>Sharpe</th><th>12-1 Mom</th></tr>
+      <tr><th>#</th><th>Ticker</th><th>Weight</th><th>Price</th><th>Sharpe</th><th>Momentum (1yr)</th></tr>
       {rows}</table>"""
 
     # ── Assemble page ───────────────────────────────────────────────────

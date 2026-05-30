@@ -453,7 +453,7 @@ def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> str:
 
     good = scored[scored["verdict"] == "GOOD"].head(5)
     picks = [
-        f"{label(r['ticker'])} Shp {r['sharpe']:.1f}, MoM {r['momentum_12_1']*100:.0f}%"
+        f"{label(r['ticker'])} Sharpe {r['sharpe']:.1f}, Momentum {r['momentum_12_1']*100:.0f}%"
         for _, r in good.iterrows()
     ]
     port = "; ".join(
