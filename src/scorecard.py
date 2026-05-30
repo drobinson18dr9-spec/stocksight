@@ -25,6 +25,7 @@ returns are never guaranteed. Past performance does not predict the future.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 import argparse
@@ -444,17 +445,25 @@ def write_reports(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> s
 
 
 def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> str:
+    names = get_company_names()
+
+    def label(t: str) -> str:
+        c = names.get(t, "")
+        return f"{t} ({c})" if c else t
+
     good = scored[scored["verdict"] == "GOOD"].head(5)
-    picks = []
-    for _, r in good.iterrows():
-        picks.append(f"{r['ticker']} (Shp {r['sharpe']:.1f}, mom {r['momentum_12_1']*100:.0f}%)")
-    port = ", ".join(f"{r['ticker']} {r['weight']*100:.0f}%" for _, r in portfolio.head(6).iterrows())
-    n_good = int((scored["verdict"] == "GOOD").sum())
+    picks = [
+        f"{label(r['ticker'])} Shp {r['sharpe']:.1f}, MoM {r['momentum_12_1']*100:.0f}%"
+        for _, r in good.iterrows()
+    ]
+    port = "; ".join(
+        f"{label(r['ticker'])} {r['weight']*100:.0f}%" for _, r in portfolio.head(6).iterrows())
     msg = (
-        f"StockSight {asof} — market scan done. {n_good} names rated GOOD.\n"
-        f"Sharpest movers: {', '.join(p.split(' (')[0] for p in picks) if picks else 'none cleared'}\n"
-        f"Today's portfolio: {port if port else 'n/a'}\n"
-        f"Charts + full breakdown: {DASHBOARD_URL}"
+        f"StockSight {asof}\n"
+        f"Top picks: {'; '.join(picks) if picks else 'none cleared screen'}\n"
+        f"Portfolio: {port if port else 'n/a'}\n"
+        f"Why: highest trailing risk-adjusted return + positive momentum + above trend.\n"
+        f"Full breakdown: {DASHBOARD_URL}"
     )
     return msg
 
@@ -463,6 +472,46 @@ def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> str:
 # Main
 # ──────────────────────────────────────────────────────────────────────
 CACHE_DIR = DATA_DIR / "cache"
+
+_ENTITY_TAIL = re.compile(
+    r",?\s*(Incorporated|Inc\.?|Corporation|Corp\.?|Company|Co\.?|Holdings?|"
+    r"Group|Ltd\.?|Limited|PLC|N\.V\.|S\.A\.|plc|Trust|Fund)\s*$", re.I)
+_SHARE_CLASS = re.compile(
+    r"\s*(Common Stock|Class [A-C].*|Ordinary Shares.*|Common Shares.*|"
+    r"American Depositary Shares?.*|Depositary Shares.*|- .*)$", re.I)
+
+
+def _clean_company(name: str) -> str:
+    n = _SHARE_CLASS.sub("", str(name)).strip().rstrip(",")
+    n = _ENTITY_TAIL.sub("", n).strip().rstrip(",")
+    n = _ENTITY_TAIL.sub("", n).strip().rstrip(",")   # second pass (e.g. "X Corporation")
+    return n
+
+
+def get_company_names() -> dict:
+    """Map ticker -> short company name from Alpaca's asset list (cached daily).
+    Returns {} on any failure so callers fall back to bare tickers."""
+    CACHE_DIR.mkdir(exist_ok=True)
+    asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    cache = CACHE_DIR / f"names_{asof}.pkl"
+    if cache.exists():
+        return pd.read_pickle(cache)
+    names = {}
+    try:
+        from alpaca.trading.client import TradingClient
+        from alpaca.trading.requests import GetAssetsRequest
+        from alpaca.trading.enums import AssetClass, AssetStatus
+        key, secret = os.environ.get("ALPACA_API_KEY"), os.environ.get("ALPACA_API_SECRET")
+        client = TradingClient(key, secret, paper=True)
+        assets = client.get_all_assets(GetAssetsRequest(
+            asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE))
+        for a in assets:
+            if a.name:
+                names[a.symbol.upper().strip()] = _clean_company(a.name)
+        pd.to_pickle(names, cache)
+    except Exception as e:
+        print(f"Company-name lookup unavailable ({e}); using bare tickers.")
+    return names
 
 
 def get_bars(universe_limit: int | None = None, lookback_days: int = 420,
