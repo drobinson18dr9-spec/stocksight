@@ -525,30 +525,30 @@ def write_reports(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> s
     return md_path.read_text(encoding="utf-8")
 
 
-def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> str:
+def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str,
+              title: str = "StockSight") -> str:
     names = get_company_names()
 
-    def label(t: str) -> str:
-        c = names.get(t, "")
-        return f"{t} ({c})" if c else t
+    def nm(t: str) -> str:
+        c = (names.get(t, "") or "")[:18].strip()    # short, clean company name
+        return f"{t} {c}".strip()
 
     good = scored[scored["verdict"] == "GOOD"].head(5)
-    picks = [
-        f"{label(r['ticker'])} ${r['current_price']:.2f}, Sharpe {r['sharpe']:.1f}, "
-        f"Momentum {r['momentum_12_1']*100:.0f}%"
-        for _, r in good.iterrows()
-    ]
-    port = "; ".join(
-        f"{label(r['ticker'])} ${r['current_price']:.2f} {r['weight']*100:.0f}%"
-        for _, r in portfolio.head(6).iterrows())
-    msg = (
-        f"StockSight {asof}\n"
-        f"Top picks: {'; '.join(picks) if picks else 'none cleared screen'}\n"
-        f"Portfolio: {port if port else 'n/a'}\n"
-        f"Why: highest trailing risk-adjusted return + positive momentum + above trend.\n"
-        f"Full breakdown: {DASHBOARD_URL}"
-    )
-    return msg
+    lines = [f"{title} {asof}", "", "Top picks:"]
+    if len(good):
+        for _, r in good.iterrows():
+            lines.append(f"  {nm(r['ticker'])}  ${r['current_price']:.2f}  "
+                         f"Sharpe {r['sharpe']:.1f}  Mom {r['momentum_12_1']*100:.0f}%")
+    else:
+        lines.append("  none cleared the screen")
+    lines += ["", "Portfolio (HRP):"]
+    if len(portfolio):
+        for _, r in portfolio.head(6).iterrows():
+            lines.append(f"  {nm(r['ticker'])}  ${r['current_price']:.2f}  {r['weight']*100:.0f}%")
+    else:
+        lines.append("  n/a")
+    lines += ["", "Why: top risk-adjusted momentum, above 200d trend.", DASHBOARD_URL]
+    return "\n".join(lines)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -635,8 +635,8 @@ def run(top_n: int = 12, max_weight: float = 0.25,
 
 # Strategy presets: (label, MIN_PRICE, MAX_PRICE). Add more bands here anytime.
 STRATEGIES = [
-    ("Core (price >= $5)", "5", "1e12"),
-    ("Affordable ($5-$40)", "5", "40"),
+    ("Core", "5", "1e12"),
+    ("Affordable", "5", "40"),
 ]
 
 
@@ -655,7 +655,7 @@ def run_multi(top_n: int = 12, max_weight: float = 0.25,
         portfolio = build_portfolio(scored, bars, top_n=top_n, max_weight=max_weight)
         if i == 0:                       # Core feeds the saved report/dashboard
             write_reports(scored, portfolio, asof)
-        msg = f"[{label_}]\n" + build_sms(scored, portfolio, asof)
+        msg = build_sms(scored, portfolio, asof, title=label_)
         out.append((label_, msg))
         print("\n" + "=" * 60 + "\n" + msg + "\n" + "=" * 60)
     return out

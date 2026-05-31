@@ -72,14 +72,21 @@ jobs:
           pattern: pred-*
           merge-multiple: true
           path: assets/predict
-      - name: Persist forecasts to repo
+      - name: Persist forecasts to repo (robust)
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add assets/predict
+          echo "JSONs gathered: $(find assets/predict -name '*.json' | wc -l)"
+          git add -f assets/predict
           git commit -m "Full universe forecast precompute" || echo "no change"
-          git pull --rebase || true
-          git push || echo "push skipped"
+          n=0
+          until git push origin HEAD:master; do
+            n=$((n+1)); if [ $n -ge 6 ]; then echo "PUSH FAILED after retries"; exit 1; fi
+            echo "push retry $n"; git fetch origin master
+            git rebase -X theirs origin/master || git rebase --abort
+            sleep 5
+          done
+          echo "Pushed. Repo JSONs now: $(git ls-files assets/predict | grep -c json)"
       - name: Build dashboard + full explorer
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
