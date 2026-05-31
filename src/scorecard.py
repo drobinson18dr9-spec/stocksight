@@ -542,6 +542,18 @@ def write_reports(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> s
     return md_path.read_text(encoding="utf-8")
 
 
+def _sent_tag(row) -> str:
+    """Compact sentiment tag for the picks line: tone + delta + agreement."""
+    s = row.get("sent_overall")
+    if s is None or pd.isna(s):
+        return ""
+    arrow = "+" if s > 0.05 else ("-" if s < -0.05 else "~")
+    mom = row.get("sent_momentum")
+    delta = f" d{mom:+.2f}" if mom is not None and not pd.isna(mom) else ""
+    agree = "*" if row.get("sources_agree") else ""
+    return f"  News {arrow}{abs(s):.2f}{delta}{agree}"
+
+
 def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str,
               title: str = "StockSight") -> str:
     names = get_company_names()
@@ -555,16 +567,21 @@ def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str,
     if len(good):
         for _, r in good.iterrows():
             lines.append(f"  {nm(r['ticker'])}  ${r['current_price']:.2f}  "
-                         f"Sharpe {r['sharpe']:.1f}  Mom {r['momentum_12_1']*100:.0f}%")
+                         f"Sharpe {r['sharpe']:.1f}  Mom {r['momentum_12_1']*100:.0f}%"
+                         + _sent_tag(r))
     else:
         lines.append("  none cleared the screen")
     lines += ["", "Portfolio (HRP):"]
     if len(portfolio):
         for _, r in portfolio.head(6).iterrows():
-            lines.append(f"  {nm(r['ticker'])}  ${r['current_price']:.2f}  {r['weight']*100:.0f}%")
+            lines.append(f"  {nm(r['ticker'])}  ${r['current_price']:.2f}  "
+                         f"{r['weight']*100:.0f}%" + _sent_tag(r))
     else:
         lines.append("  n/a")
-    lines += ["", "Why: top risk-adjusted momentum, above 200d trend.", DASHBOARD_URL]
+    lines += ["",
+              "News tag: tone in [-1,+1], d=3d momentum, * = sources agree.",
+              "Why: top risk-adjusted momentum, above 200d trend.",
+              DASHBOARD_URL]
     return "\n".join(lines)
 
 

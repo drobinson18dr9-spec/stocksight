@@ -115,17 +115,24 @@ def build(universe_limit=None):
         bt_div = f"<div id='backtest' class='chart'>{_div(f5)}</div>"
 
     # ── Picks table ─────────────────────────────────────────────────────
+    def _cell(val, fmt="{:+.2f}"):
+        if val is None or pd.isna(val):
+            return ("<td style='color:#aaa'>-</td>", 0.0)
+        col = "#1a9850" if val > 0.05 else ("#d73027" if val < -0.05 else "#666")
+        return (f"<td style='color:{col}'>{fmt.format(val)}</td>", val)
+
     rows = ""
     for i, (_, r) in enumerate(portfolio.iterrows(), 1):
-        ns = r.get("news_sentiment", 0.0)
-        ns = 0.0 if pd.isna(ns) else ns
-        tone = "#1a9850" if ns > 0.05 else ("#d73027" if ns < -0.05 else "#666")
+        tone_c, _ = _cell(r.get("sent_overall", r.get("news_sentiment", 0.0)))
+        mom_c, _ = _cell(r.get("sent_momentum"))
+        agree = "✓" if r.get("sources_agree") else "·"
         rows += (f"<tr><td>{i}</td><td><b>{r['ticker']}</b></td><td>{r['weight']*100:.1f}%</td>"
                  f"<td>${r['current_price']:.2f}</td><td>{r['sharpe']:.2f}</td>"
                  f"<td>{r['momentum_12_1']*100:.0f}%</td>"
-                 f"<td style='color:{tone}'>{ns:+.2f}</td></tr>")
+                 f"{tone_c}{mom_c}<td style='text-align:center'>{agree}</td></tr>")
     table = f"""<table>
-      <tr><th>#</th><th>Ticker</th><th>Weight</th><th>Price</th><th>Sharpe</th><th>Momentum (1yr)</th><th>News tone</th></tr>
+      <tr><th>#</th><th>Ticker</th><th>Weight</th><th>Price</th><th>Sharpe</th><th>Mom (1y)</th>
+          <th>News tone</th><th>3d &Delta;</th><th>Src agree</th></tr>
       {rows}</table>"""
 
     # Fundamentals table (yfinance: valuation, quality, analyst targets)
