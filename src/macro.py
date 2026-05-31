@@ -20,6 +20,13 @@ def _last(sym: str):
         return None
 
 
+def risk_free_rate() -> float | None:
+    """Live risk-free rate = latest 13-week US T-bill yield (^IRX, percent),
+    returned as a decimal (e.g. 0.043). None if unavailable."""
+    v = _last("^IRX")
+    return round(v / 100.0, 4) if v is not None else None
+
+
 def get() -> dict:
     t10 = _last("^TNX")     # 10y yield (percent)
     t3m = _last("^IRX")     # 13-week T-bill (percent)

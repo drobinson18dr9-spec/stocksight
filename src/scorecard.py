@@ -617,8 +617,28 @@ def get_bars(universe_limit: int | None = None, lookback_days: int = 420,
     return bars
 
 
+def set_live_risk_free():
+    """Update the risk-free rate (and daily equivalent) from the live 3-month
+    T-bill. Everything, Sharpe, Sortino, the optimizer, is then measured
+    against the real cost of cash, not a stale constant. Falls back silently."""
+    global RISK_FREE_RATE, RF_DAILY
+    if os.environ.get("RISK_FREE_RATE"):
+        RISK_FREE_RATE = float(os.environ["RISK_FREE_RATE"])
+    else:
+        try:
+            import macro
+            r = macro.risk_free_rate()
+            if r and 0 < r < 0.2:
+                RISK_FREE_RATE = r
+        except Exception as e:
+            print(f"Live rf unavailable ({e}); using {RISK_FREE_RATE:.2%}")
+    RF_DAILY = (1 + RISK_FREE_RATE) ** (1 / TRADING_DAYS) - 1
+    print(f"Risk-free rate (3M T-bill): {RISK_FREE_RATE:.2%}")
+
+
 def run(top_n: int = 12, max_weight: float = 0.25,
         universe_limit: int | None = None, lookback_days: int = 420) -> str:
+    set_live_risk_free()
     asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     bars = get_bars(universe_limit=universe_limit, lookback_days=lookback_days)
     metrics = compute_metrics(bars)
@@ -644,6 +664,7 @@ def run_multi(top_n: int = 12, max_weight: float = 0.25,
               universe_limit: int | None = None, lookback_days: int = 420) -> list:
     """Run several price-band strategies off one data pull. Core also drives the
     saved report/dashboard. Returns [(label, summary_text), ...]."""
+    set_live_risk_free()
     asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     bars = get_bars(universe_limit=universe_limit, lookback_days=lookback_days)
     metrics = compute_metrics(bars)
