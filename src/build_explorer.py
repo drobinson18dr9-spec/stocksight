@@ -86,10 +86,13 @@ def main(tickers=None, test_days=20, horizon=15,
     # One batched pull for all names
     start = datetime.now(timezone.utc) - timedelta(days=int(3 * 365) + 60)
     end = datetime.now(timezone.utc) - timedelta(days=1)
-    bars = sc.fetch_bars(tickers, start, end)
+    try:
+        bars = sc.fetch_bars(tickers, start, end)
+    except SystemExit:                       # Alpaca returned nothing (e.g. all OTC)
+        bars = pd.DataFrame(columns=["ticker", "timestamp", "close", "volume"])
 
     # Fallback: any ticker Alpaca lacks (e.g. OTC/ADRs like RYCEY) -> Yahoo.
-    have = {t for t, g in bars.groupby("ticker") if len(g) >= 300}
+    have = {t for t, g in bars.groupby("ticker") if len(g) >= 300} if len(bars) else set()
     missing = [t for t in tickers if t not in have]
     if missing:
         yb = _yf_bars(missing, start, end)
