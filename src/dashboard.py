@@ -263,61 +263,136 @@ def build_forecasts():
 <title>StockSight Forecasts</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
+ *{{box-sizing:border-box}}
  body{{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f7f8fa;color:#1a1a2e}}
- header{{background:#0f1b3d;color:#fff;padding:16px 22px}} header a{{color:#9ec5ff}}
- .bar{{padding:14px 22px}} input{{font-size:16px;padding:8px 12px;border-radius:8px;border:1px solid #ccc;width:260px}}
- .card{{margin:0 22px 22px;background:#fff;border-radius:10px;padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
- table{{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0 16px}}
- th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #eee}} th{{background:#f0f2f7}}
- h4{{margin:14px 6px 4px}} #msg{{margin:0 22px;color:#a33}}
+ header{{background:#0f1b3d;color:#fff;padding:14px 16px}} header a{{color:#9ec5ff}}
+ header h1{{margin:0;font-size:22px}} header p{{margin:6px 0 0;font-size:14px}}
+ .bar{{padding:12px 16px}} .bar label{{font-weight:600}}
+ input{{font-size:16px;padding:9px 12px;border-radius:8px;border:1px solid #ccc;width:240px;max-width:100%}}
+ button{{border:0;padding:9px 14px;border-radius:8px;cursor:pointer;background:#0f1b3d;color:#fff;font-size:14px}}
+ .card{{margin:0 16px 16px;background:#fff;border-radius:10px;padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
+ .chart{{width:100%;height:62vh;min-height:340px}}
+ .scroll{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
+ table{{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0 14px}}
+ th,td{{padding:6px 9px;text-align:left;border-bottom:1px solid #eee;white-space:nowrap}} th{{background:#f0f2f7}}
+ h4{{margin:12px 4px 4px}} #msg{{margin:0 16px;color:#a33}}
+ .chip{{display:inline-block;background:#e6e9f0;border-radius:14px;padding:5px 10px;margin:3px;font-size:14px}}
+ .chip b{{cursor:pointer;color:#a33;margin-left:6px}}
+ .tabs button{{background:#e6e9f0;color:#1a1a2e;margin-right:8px}} .tabs button.on{{background:#0f1b3d;color:#fff}}
+ @media (max-width:600px){{ header h1{{font-size:19px}} input{{width:100%}} .card{{margin:0 8px 10px;padding:8px}} }}
 </style></head><body>
-<header><h1>StockSight Forecasts explorer</h1>
-<p><a href="index.html">&larr; back to scorecard</a> &middot; type any of {len(all_syms)} tickers. Dotted lines and the forward table are future predictions (no actuals yet).</p></header>
-<div class="bar"><label>Ticker: </label>
-  <input id="picker" list="alltickers" placeholder="type a symbol, e.g. AAPL" autocomplete="off" value="{first}">
-  <datalist id="alltickers">{datalist}</datalist>
-  <span style="margin-left:10px;color:#666">{len(served)} loaded; more added each run</span>
+<header><h1>StockSight Forecasts</h1>
+<p><a href="index.html">&larr; scorecard</a> &middot; {len(all_syms)} tickers searchable. Dotted lines / forward table are future predictions.</p></header>
+<div class="bar tabs">
+  <button id="tabSingle" class="on" onclick="tab('single')">Single ticker</button>
+  <button id="tabPort" onclick="tab('port')">Build portfolio</button>
 </div>
-<div id="msg"></div>
-<div class="card" id="chartcard"><div id="chart" style="height:520px"></div></div>
-<div class="card" id="tables"></div>
+
+<div id="singleView">
+  <div class="bar">
+    <input id="picker" list="alltickers" placeholder="type a symbol, e.g. AAPL" autocomplete="off" value="{first}">
+    <datalist id="alltickers">{datalist}</datalist>
+  </div>
+  <div id="msg"></div>
+  <div class="card"><div id="chart" class="chart"></div></div>
+  <div class="card scroll" id="tables"></div>
+</div>
+
+<div id="portView" style="display:none">
+  <div class="bar">
+    <input id="padd" list="alltickers" placeholder="add a ticker" autocomplete="off">
+    <button onclick="addChip()">Add</button>
+    <button onclick="buildPort()">Build portfolio</button>
+    <div id="basket" style="margin-top:8px"></div>
+  </div>
+  <div id="pmsg" style="margin:0 16px;color:#a33"></div>
+  <div class="card"><div id="pchart" class="chart"></div></div>
+  <div class="card scroll" id="ptable"></div>
+</div>
+
 <script>
  var PRE = {pre_js};
+ var LAYOUT = {{template:'plotly_white',margin:{{t:34,l:46,r:10,b:36}},
+   legend:{{orientation:'h',y:-0.18,x:0,font:{{size:11}}}},yaxis:{{title:'Price ($)'}}}};
+ var CFG = {{responsive:true,displaylogo:false}};
  function fmt(v){{return (v==null||isNaN(v))?'-':Number(v).toFixed(2);}}
+ function pct(v){{return (v==null||isNaN(v))?'-':(v>=0?'+':'')+(v*100).toFixed(1)+'%';}}
+ function annVol(wf){{var a=wf.map(r=>r.actual),x=[];for(var i=1;i<a.length;i++)x.push(a[i]/a[i-1]-1);
+   var m=x.reduce((p,q)=>p+q,0)/x.length,v=x.reduce((s,q)=>s+(q-m)*(q-m),0)/(x.length-1);return Math.sqrt(v*252);}}
+
  function render(d){{
    document.getElementById('msg').textContent='';
    var M=d.models, wf=d.walk_forward, fwd=d.forward, traces=[];
    traces.push({{x:wf.map(r=>r.date),y:wf.map(r=>r.actual),name:'ACTUAL',mode:'lines',line:{{color:'black',width:3}}}});
    M.forEach(m=>{{
      traces.push({{x:wf.map(r=>r.date),y:wf.map(r=>r[m]),name:m,mode:'lines',line:{{width:1.3}}}});
-     traces.push({{x:fwd.map(r=>r.date),y:fwd.map(r=>r[m]),name:m+' fwd',mode:'lines',line:{{width:1,dash:'dot'}},showlegend:false}});
+     traces.push({{x:fwd.map(r=>r.date),y:fwd.map(r=>r[m]),mode:'lines',line:{{width:1,dash:'dot'}},showlegend:false}});
    }});
-   traces.push({{x:fwd.map(r=>r.date),y:fwd.map(r=>r.ensemble_mean),name:'Ensemble (forecast)',mode:'lines',line:{{color:'red',width:2.5,dash:'dash'}}}});
-   Plotly.newPlot('chart',traces,{{title:d.ticker+': actual vs model predictions (dotted = future forecast)',template:'plotly_white',yaxis:{{title:'Price ($)'}},margin:{{t:40}}}},{{responsive:true,displaylogo:false}});
-   var em='<h4>Model accuracy (walk-forward backtest)</h4><table><tr><th>Model</th><th>MAE</th><th>RMSE</th><th>MAPE</th><th>Dir. acc</th></tr>';
+   traces.push({{x:fwd.map(r=>r.date),y:fwd.map(r=>r.ensemble_mean),name:'Ensemble fwd',mode:'lines',line:{{color:'red',width:2.5,dash:'dash'}}}});
+   var L=Object.assign({{}},LAYOUT,{{title:d.ticker+': actual vs predictions'}});
+   Plotly.newPlot('chart',traces,L,CFG);
+   var em='<h4>Model accuracy (backtest)</h4><table><tr><th>Model</th><th>MAE</th><th>RMSE</th><th>MAPE</th><th>Dir acc</th></tr>';
    d.error_metrics.forEach(r=>{{em+='<tr><td>'+r.model+'</td><td>'+r.MAE+'</td><td>'+r.RMSE+'</td><td>'+r['MAPE_%']+'%</td><td>'+r['DirAcc_%']+'%</td></tr>';}});
    em+='</table>';
    var fcols=M.concat(['ensemble_mean']);
-   var ft='<h4>Forward forecast (future dates, no actuals exist)</h4><table><tr><th>Date</th>'+fcols.map(c=>'<th>'+c+'</th>').join('')+'</tr>';
+   var ft='<h4>Forward forecast (future, no actuals)</h4><table><tr><th>Date</th>'+fcols.map(c=>'<th>'+c+'</th>').join('')+'</tr>';
    fwd.forEach(r=>{{ft+='<tr><td>'+r.date+'</td>'+fcols.map(c=>'<td>'+fmt(r[c])+'</td>').join('')+'</tr>';}});
    ft+='</table>';
-   var rec=wf.slice(-8), vh=M.map(m=>'<th>'+m+'</th><th>&Delta;'+m+'</th>').join('');
-   var vt='<h4>Actual vs predicted vs variance (&Delta; = actual - predicted)</h4><div style="overflow-x:auto"><table><tr><th>Date</th><th>Actual</th>'+vh+'</tr>';
+   var rec=wf.slice(-8), vh=M.map(m=>'<th>'+m+'</th><th>&Delta;</th>').join('');
+   var vt='<h4>Actual vs predicted vs variance</h4><table><tr><th>Date</th><th>Actual</th>'+vh+'</tr>';
    rec.forEach(r=>{{vt+='<tr><td>'+r.date+'</td><td><b>'+fmt(r.actual)+'</b></td>'+M.map(m=>{{var v=r['var_'+m];return '<td>'+fmt(r[m])+'</td><td style="color:#888">'+(v==null?'-':(v>=0?'+':'')+Number(v).toFixed(2))+'</td>';}}).join('')+'</tr>';}});
-   vt+='</table></div>';
+   vt+='</table>';
    document.getElementById('tables').innerHTML=em+ft+vt;
  }}
  function show(t){{
    t=(t||'').toUpperCase().trim();
-   if(PRE.indexOf(t)>=0){{
-     fetch('predict/'+t+'.json').then(r=>r.json()).then(render)
-       .catch(e=>{{document.getElementById('msg').textContent='Could not load '+t;}});
-   }} else {{
-     Plotly.purge('chart'); document.getElementById('tables').innerHTML='';
-     document.getElementById('msg').textContent = t ? ('No forecast loaded for '+t+' yet. The set expands automatically each run.') : '';
-   }}
+   if(PRE.indexOf(t)>=0){{ fetch('predict/'+t+'.json').then(r=>r.json()).then(render)
+       .catch(e=>{{document.getElementById('msg').textContent='Could not load '+t;}}); }}
+   else {{ Plotly.purge('chart'); document.getElementById('tables').innerHTML='';
+     document.getElementById('msg').textContent = t ? ('No forecast loaded for '+t+' yet.') : ''; }}
  }}
  document.getElementById('picker').addEventListener('change',function(){{show(this.value);}});
+
+ function tab(which){{
+   document.getElementById('singleView').style.display = which=='single'?'block':'none';
+   document.getElementById('portView').style.display = which=='port'?'block':'none';
+   document.getElementById('tabSingle').className = which=='single'?'on':'';
+   document.getElementById('tabPort').className = which=='port'?'on':'';
+   window.dispatchEvent(new Event('resize'));
+ }}
+ var BASKET=[];
+ function drawBasket(){{ document.getElementById('basket').innerHTML =
+   BASKET.map(t=>'<span class="chip">'+t+'<b onclick="rmChip(\\''+t+'\\')">x</b></span>').join(''); }}
+ function addChip(){{ var v=(document.getElementById('padd').value||'').toUpperCase().trim();
+   if(v && BASKET.indexOf(v)<0){{BASKET.push(v); drawBasket();}} document.getElementById('padd').value=''; }}
+ function rmChip(t){{ BASKET=BASKET.filter(x=>x!=t); drawBasket(); }}
+ async function buildPort(){{
+   var pm=document.getElementById('pmsg'); pm.textContent='';
+   var syms=BASKET.filter(t=>PRE.indexOf(t)>=0), skip=BASKET.filter(t=>PRE.indexOf(t)<0);
+   if(syms.length<2){{pm.textContent='Add at least 2 loaded tickers (skipped/not loaded: '+(skip.join(', ')||'none')+').';return;}}
+   var data=await Promise.all(syms.map(t=>fetch('predict/'+t+'.json').then(r=>r.json())));
+   var rows=data.map(d=>{{var fin=d.forward[d.forward.length-1].ensemble_mean;
+     return {{t:d.ticker,price:d.last_close,ret:fin/d.last_close-1,vol:annVol(d.walk_forward),fwd:d.forward}};}});
+   var inv=rows.map(r=>1/(r.vol||1)),si=inv.reduce((a,b)=>a+b,0);
+   rows.forEach((r,i)=>{{r.ew=1/rows.length;r.iv=inv[i]/si;}});
+   var pEW=rows.reduce((s,r)=>s+r.ew*r.ret,0),pIV=rows.reduce((s,r)=>s+r.iv*r.ret,0);
+   var pVol=Math.sqrt(rows.reduce((s,r)=>s+r.iv*r.iv*r.vol*r.vol,0)); // ignores correlation (upper-ish bound)
+   var dates=rows[0].fwd.map(r=>r.date), traces=[];
+   rows.forEach(r=>{{traces.push({{x:dates,y:r.fwd.map(p=>p.ensemble_mean/r.price*100),name:r.t,mode:'lines',line:{{width:1.3}}}});}});
+   var blend=dates.map((_,j)=>rows.reduce((s,r)=>s+r.iv*(r.fwd[j].ensemble_mean/r.price*100),0));
+   traces.push({{x:dates,y:blend,name:'Portfolio (inv-vol)',mode:'lines',line:{{color:'red',width:3}}}});
+   var L=Object.assign({{}},LAYOUT,{{title:'Hypothetical portfolio: forward path (start=100)',yaxis:{{title:'Growth of 100'}}}});
+   Plotly.newPlot('pchart',traces,L,CFG);
+   var tb='<h4>Constituents ('+syms.length+' names)</h4><table><tr><th>Ticker</th><th>Price</th><th>Equal wt</th><th>Inv-vol wt</th><th>Ann vol</th><th>Fwd return</th></tr>';
+   rows.forEach(r=>{{tb+='<tr><td><b>'+r.t+'</b></td><td>$'+fmt(r.price)+'</td><td>'+(r.ew*100).toFixed(1)+'%</td><td>'+(r.iv*100).toFixed(1)+'%</td><td>'+(r.vol*100).toFixed(0)+'%</td><td>'+pct(r.ret)+'</td></tr>';}});
+   tb+='</table><h4>Portfolio projection (over the forecast horizon)</h4><table>'+
+     '<tr><th>Weighting</th><th>Projected return</th></tr>'+
+     '<tr><td>Equal weight</td><td>'+pct(pEW)+'</td></tr>'+
+     '<tr><td>Inverse-vol</td><td>'+pct(pIV)+'</td></tr>'+
+     '<tr><td>Portfolio ann vol (corr ignored)</td><td>'+(pVol*100).toFixed(0)+'%</td></tr></table>'+
+     (skip.length?('<p style="color:#a33">Not loaded, skipped: '+skip.join(', ')+'</p>'):'');
+   document.getElementById('ptable').innerHTML=tb;
+ }}
  show('{first}');
 </script></body></html>"""
     (SITE / "forecasts.html").write_text(page, encoding="utf-8")
