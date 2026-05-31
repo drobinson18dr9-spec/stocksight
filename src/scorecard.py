@@ -292,9 +292,15 @@ def filter_investable(metrics: pd.DataFrame) -> pd.DataFrame:
     """Keep only tradeable names before ranking. These bounds are economically
     grounded (price, liquidity, volatility), not arbitrary return caps: they
     remove sub-$5 noise, illiquid micro-caps, and hyper-volatile leveraged
-    products whose trailing statistics are not investable signal."""
+    products whose trailing statistics are not investable signal.
+
+    Price band is configurable per strategy via env (MIN_PRICE / MAX_PRICE),
+    e.g. MIN_PRICE=5 MAX_PRICE=40 for an 'affordable' run."""
+    min_p = float(os.environ.get("MIN_PRICE", MIN_PRICE))
+    max_p = float(os.environ.get("MAX_PRICE", 1e12))
     keep = metrics[
-        (metrics["current_price"] >= MIN_PRICE)
+        (metrics["current_price"] >= min_p)
+        & (metrics["current_price"] <= max_p)
         & (metrics["ann_vol"].between(MIN_VOL, MAX_VOL))
         & (metrics["med_dollar_vol"] >= MIN_MEDIAN_DOLLAR_VOL)
     ].copy()
@@ -528,11 +534,13 @@ def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> str:
 
     good = scored[scored["verdict"] == "GOOD"].head(5)
     picks = [
-        f"{label(r['ticker'])} Sharpe {r['sharpe']:.1f}, Momentum {r['momentum_12_1']*100:.0f}%"
+        f"{label(r['ticker'])} ${r['current_price']:.2f}, Sharpe {r['sharpe']:.1f}, "
+        f"Momentum {r['momentum_12_1']*100:.0f}%"
         for _, r in good.iterrows()
     ]
     port = "; ".join(
-        f"{label(r['ticker'])} {r['weight']*100:.0f}%" for _, r in portfolio.head(6).iterrows())
+        f"{label(r['ticker'])} ${r['current_price']:.2f} {r['weight']*100:.0f}%"
+        for _, r in portfolio.head(6).iterrows())
     msg = (
         f"StockSight {asof}\n"
         f"Top picks: {'; '.join(picks) if picks else 'none cleared screen'}\n"
@@ -625,6 +633,34 @@ def run(top_n: int = 12, max_weight: float = 0.25,
     return sms
 
 
+# Strategy presets: (label, MIN_PRICE, MAX_PRICE). Add more bands here anytime.
+STRATEGIES = [
+    ("Core (price >= $5)", "5", "1e12"),
+    ("Affordable ($5-$40)", "5", "40"),
+]
+
+
+def run_multi(top_n: int = 12, max_weight: float = 0.25,
+              universe_limit: int | None = None, lookback_days: int = 420) -> list:
+    """Run several price-band strategies off one data pull. Core also drives the
+    saved report/dashboard. Returns [(label, summary_text), ...]."""
+    asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    bars = get_bars(universe_limit=universe_limit, lookback_days=lookback_days)
+    metrics = compute_metrics(bars)
+    out = []
+    for i, (label_, min_p, max_p) in enumerate(STRATEGIES):
+        os.environ["MIN_PRICE"], os.environ["MAX_PRICE"] = min_p, max_p
+        inv = filter_investable(metrics)
+        scored = score(inv)
+        portfolio = build_portfolio(scored, bars, top_n=top_n, max_weight=max_weight)
+        if i == 0:                       # Core feeds the saved report/dashboard
+            write_reports(scored, portfolio, asof)
+        msg = f"[{label_}]\n" + build_sms(scored, portfolio, asof)
+        out.append((label_, msg))
+        print("\n" + "=" * 60 + "\n" + msg + "\n" + "=" * 60)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="StockSight daily scorecard")
     ap.add_argument("--top", type=int, default=12, help="portfolio size")
@@ -632,8 +668,26 @@ def main():
     ap.add_argument("--universe-limit", type=int, default=None,
                     help="cap universe size (for fast test runs)")
     ap.add_argument("--lookback-days", type=int, default=420)
+    ap.add_argument("--multi", action="store_true", help="run all STRATEGIES and post each")
     ap.add_argument("--no-notify", action="store_true", help="skip sending the text")
     args = ap.parse_args()
+
+    if args.multi:
+        results = run_multi(top_n=args.top, max_weight=args.max_weight,
+                            universe_limit=args.universe_limit, lookback_days=args.lookback_days)
+        if not args.no_notify:
+            try:
+                import notify
+                # Core via the full chain (Twilio primary, Slack fallback);
+                # the rest straight to Slack so every strategy is visible.
+                for i, (_, msg) in enumerate(results):
+                    if i == 0:
+                        notify.send(msg)
+                    else:
+                        notify._slack(msg)
+            except Exception as e:
+                print(f"Notify skipped/failed: {e}")
+        return
 
     sms = run(top_n=args.top, max_weight=args.max_weight,
               universe_limit=args.universe_limit, lookback_days=args.lookback_days)
