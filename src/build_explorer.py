@@ -55,6 +55,10 @@ def main(tickers=None, test_days=20, horizon=15,
             tickers = portfolio_tickers()
     if num_shards > 1:
         tickers = tickers[shard::num_shards]              # this runner's slice
+    # Skip Windows-reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9):
+    # their <ticker>.json files are invalid paths on Windows checkouts.
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+    tickers = [t for t in tickers if t.upper() not in reserved]
     print(f"Precomputing forecasts: {len(tickers)} names "
           f"(shard {shard}/{num_shards}, all_universe={all_universe})")
 

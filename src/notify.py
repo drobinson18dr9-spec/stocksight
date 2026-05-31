@@ -15,6 +15,7 @@ SMTP_USER/PASS works with a Gmail App Password (not your normal password).
 
 from __future__ import annotations
 import os
+import time
 import smtplib
 from email.mime.text import MIMEText
 
@@ -22,17 +23,32 @@ import requests
 
 
 def _twilio(msg: str) -> bool:
+    """Primary channel. Returns True only if the SMS actually DELIVERS (or is
+    cleanly handed to the carrier). If the carrier rejects it (e.g. A2P 30034),
+    returns False so a fallback channel fires."""
     sid = os.environ.get("TWILIO_SID")
     token = os.environ.get("TWILIO_TOKEN")
     frm = os.environ.get("TWILIO_FROM")
     to = os.environ.get("SMS_TO")
     if not all([sid, token, frm, to]):
         return False
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
-    r = requests.post(url, auth=(sid, token),
+    base = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages"
+    r = requests.post(base + ".json", auth=(sid, token),
                       data={"From": frm, "To": to, "Body": msg}, timeout=20)
     r.raise_for_status()
-    print("Sent via Twilio SMS.")
+    msid = r.json().get("sid")
+    # Poll the real delivery status (A2P/carrier failures show up async).
+    for _ in range(8):
+        time.sleep(2)
+        st = requests.get(f"{base}/{msid}.json", auth=(sid, token), timeout=20).json()
+        status, err = st.get("status"), st.get("error_code")
+        if status == "delivered":
+            print("Twilio: delivered.")
+            return True
+        if status in ("undelivered", "failed", "canceled"):
+            print(f"Twilio failed (status={status}, error={err}); falling back.")
+            return False
+    print("Twilio: handed to carrier (no failure reported); not falling back.")
     return True
 
 
