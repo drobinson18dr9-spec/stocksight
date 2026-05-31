@@ -15,6 +15,7 @@ Yahoo (^MOVE) fallback. Fails open to None.
 
 from __future__ import annotations
 import os
+import math
 from scipy.stats import norm
 import requests
 
@@ -52,12 +53,26 @@ def recession_prob(spread: float) -> float:
     return float(norm.cdf(-0.5333 - 0.6330 * spread))
 
 
+def _yield_pct(fred_id: str, yahoo_sym: str):
+    """A Treasury yield in PERCENT, from FRED (already %) or Yahoo. Yahoo's
+    ^TNX/^IRX are sometimes quoted as yield x10, so normalize implausible values.
+    Returns None on non-finite (audit fix: consistent units + NaN guard)."""
+    v = _fred_latest(fred_id)
+    if v is not None and math.isfinite(v):
+        return v
+    y = _yf_last(yahoo_sym)
+    if y is None or not math.isfinite(y):
+        return None
+    return y / 10.0 if y > 25 else y             # 44.5 -> 4.45%, 4.45 -> 4.45%
+
+
 def get() -> dict:
-    t10 = _fred_latest("DGS10") or _yf_last("^TNX")
-    t3m = _fred_latest("DGS3MO") or (_yf_last("^IRX"))
+    t10 = _yield_pct("DGS10", "^TNX")
+    t3m = _yield_pct("DGS3MO", "^IRX")
     hy = _fred_latest("BAMLH0A0HYM2")            # HY option-adjusted spread (%)
     move = _yf_last("^MOVE")                      # bond-market implied vol
-    spread = round(t10 - t3m, 2) if (t10 is not None and t3m is not None) else None
+    both = t10 is not None and t3m is not None and math.isfinite(t10) and math.isfinite(t3m)
+    spread = round(t10 - t3m, 2) if both else None
     prec = round(recession_prob(spread), 3) if spread is not None else None
 
     inverted = spread is not None and spread < 0

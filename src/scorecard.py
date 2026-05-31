@@ -211,8 +211,8 @@ def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
 
         # Trailing window: TRADING_DAYS+1 closes -> TRADING_DAYS returns
         close = close_all.tail(TRADING_DAYS + 1)
-        ret = close.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
-        ret = _winsorize(ret)
+        ret_raw = close.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+        ret = _winsorize(ret_raw)                 # winsorized: for moment estimators
         n = len(ret)
         sd = ret.std(ddof=1)                      # sample std
         if n < MIN_OBS or not np.isfinite(sd) or sd == 0:
@@ -228,8 +228,11 @@ def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
         ann_vol = sd * np.sqrt(TRADING_DAYS)
 
         # ── CAGR (geometric realized return, descriptive) ────────────
+        # Annualize by the actual number of intervals between p0 and p1, not by
+        # the post-dropna return count n (audit fix: they differ when bars drop).
         p0, p1 = float(close.iloc[0]), float(close.iloc[-1])
-        cagr = (p1 / p0) ** (TRADING_DAYS / n) - 1 if p0 > 0 else np.nan
+        periods = len(close) - 1
+        cagr = (p1 / p0) ** (TRADING_DAYS / periods) - 1 if (p0 > 0 and periods > 0) else np.nan
 
         # ── Sortino: downside deviation vs target=rf over ALL obs ────
         downside_sq = np.minimum(excess, 0.0) ** 2
@@ -241,8 +244,9 @@ def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
         p_1m = float(close_all.iloc[-22])                    # ~1 month ago
         momentum = p_1m / p_12m - 1 if p_12m > 0 else np.nan
 
-        # ── Max drawdown over the window ─────────────────────────────
-        equity = (1 + ret).cumprod()
+        # ── Max drawdown over the window (RAW returns: winsorizing clips
+        #    the exact crash days that drive drawdown — audit fix) ──────
+        equity = (1 + ret_raw).cumprod()
         max_dd = float((equity / equity.cummax() - 1).min())
 
         # ── Trend and liquidity (median = robust to spikes) ──────────
@@ -403,15 +407,21 @@ def build_portfolio(scored: pd.DataFrame, bars: pd.DataFrame,
         return candidates.assign(weight=1.0 / max(len(candidates), 1))
 
     tickers = candidates["ticker"].tolist()
-    rets = (
+    panel = (
         bars[bars["ticker"].isin(tickers)]
         .pivot_table(index="timestamp", columns="ticker", values="close")
         .pct_change()
         .tail(TRADING_DAYS)
-        .dropna(axis=1, how="all")
-        .dropna()
     )
-    # Winsorize each column so a single bad tick cannot distort mu/cov.
+    # Drop names with thin coverage BEFORE the row-wise dropna, so one
+    # short-history name can't collapse the common window for everyone (audit fix).
+    coverage = panel.notna().sum()
+    keep_cols = coverage[coverage >= MIN_OBS].index.tolist()
+    rets = panel[keep_cols].dropna()
+    if len(rets) < MIN_OBS or rets.shape[1] < 2:   # not enough overlap to estimate cov
+        candidates = candidates[candidates["ticker"].isin(keep_cols)].copy()
+        return candidates.assign(weight=1.0 / max(len(candidates), 1))
+    # Winsorize each column so a single bad tick cannot distort the covariance.
     rets = rets.apply(_winsorize, axis=0)
     tickers = [t for t in tickers if t in rets.columns]
     candidates = candidates[candidates["ticker"].isin(tickers)].copy()

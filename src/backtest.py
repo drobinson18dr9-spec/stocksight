@@ -9,9 +9,11 @@ the bottom decile and against SPY. Chaining those forward returns gives an
 out-of-sample equity curve.
 
 Key honesty caveat: the universe is currently-listed tickers, so delisted
-losers are missing (survivorship bias). That inflates ABSOLUTE returns. The
-GOOD-minus-BAD spread is the more trustworthy evidence, since both buckets are
-drawn from the same surviving set.
+names are missing (survivorship bias). This inflates ABSOLUTE returns AND
+biases the GOOD-minus-BAD spread: names that delisted (often the worst) never
+enter the BAD bucket, so the spread is NOT survivorship-neutral. Treat all
+figures as upper bounds; a point-in-time universe with delisted-name returns
+would be required to remove the bias.
 
 Usage: python src/backtest.py [--years 5] [--universe-limit N]
 Outputs reports/charts/backtest.png and reports/backtest_summary.md
@@ -76,6 +78,7 @@ def main(years=5, universe_limit=None):
     for i in rebal:
         sh, mo, el = sharpe_panel.iloc[i], mom_panel.iloc[i], eligible.iloc[i]
         valid = el & sh.notna() & mo.notna()
+        valid[sc.BENCHMARK] = False            # SPY is the benchmark, not a pick (audit fix)
         sh, mo = sh[valid], mo[valid]
         if len(sh) < 30:
             continue
@@ -98,7 +101,8 @@ def main(years=5, universe_limit=None):
     gs = annualized_stats(good, periods_per_year)
     bs = annualized_stats(bad, periods_per_year)
     ss = annualized_stats(spy, periods_per_year)
-    hit = float((good > spy).mean())
+    hm = good.notna() & spy.notna()            # mask NaN benchmark months (audit fix)
+    hit = float((good[hm] > spy[hm]).mean()) if hm.any() else float("nan")
     spread_ann = (good.mean() - bad.mean()) * periods_per_year
 
     # Equity curves ------------------------------------------------------
@@ -139,8 +143,8 @@ def main(years=5, universe_limit=None):
         f"- GOOD-minus-BAD spread: {spread_ann*100:.1f}% annualized (the signal's separating power).",
         "",
         "Reading it: if GOOD > BAD by a wide margin out-of-sample, the ranking has",
-        "real separating power. Absolute returns are inflated by survivorship bias",
-        "(delisted losers absent), so trust the GOOD-vs-BAD spread over GOOD-vs-SPY.",
+        "real separating power, BUT survivorship bias (delisted names absent)",
+        "inflates both absolute returns and the GOOD-minus-BAD spread; treat as upper bounds.",
     ]
     (REPORTS / "backtest_summary.md").write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))

@@ -162,14 +162,24 @@ def run(years: int = 6, horizon: int = 21, trials: int = 10, top_q: float = 0.2)
     def ann(series):
         return (1 + series.mean()) ** ppy - 1
 
-    sr_period = s.mean() / s.std(ddof=1) if s.std(ddof=1) > 0 else np.nan
+    # Sharpe on EXCESS return over the per-period risk-free (audit fix: don't
+    # test gross returns against a zero benchmark).
+    rf_period = (1 + sc.RISK_FREE_RATE) ** (horizon / 252) - 1
+    excess = s - rf_period
+    sd = s.std(ddof=1)
+    sr_period = excess.mean() / sd if sd > 0 else np.nan
     sr_ann = sr_period * np.sqrt(ppy)
-    te = active.std(ddof=1) * np.sqrt(ppy)
-    info_ratio = (ann(s) - ann(b)) / te if te > 0 else np.nan
-    psr = probabilistic_sharpe(sr_period, len(s), float(skew(s)), float(kurtosis(s, fisher=False)))
-    # Deflate for the number of model/feature configurations we effectively tried
-    dsr = deflated_sharpe(sr_period, len(s), float(skew(s)), float(kurtosis(s, fisher=False)),
-                          n_trials=trials, sr_trials_std=max(s.std(ddof=1) / np.sqrt(len(s)), 1e-6))
+    # Information ratio: arithmetic active mean over arithmetic tracking error (audit fix).
+    te_period = active.std(ddof=1)
+    info_ratio = (active.mean() / te_period) * np.sqrt(ppy) if te_period > 0 else np.nan
+    sk, ku = float(skew(s)), float(kurtosis(s, fisher=False))
+    psr = probabilistic_sharpe(sr_period, len(s), sk, ku)
+    # DSR needs the cross-trial DISPERSION of Sharpe ratios. With one realized
+    # SR, use the analytic estimate sigma(SR) ~ sqrt((1 + 0.5*SR^2)/n) (Lo 2002)
+    # — NOT the standard error of the mean return (audit fix).
+    sr_disp = np.sqrt((1 + 0.5 * sr_period ** 2) / len(s)) if np.isfinite(sr_period) else 1e-6
+    dsr = deflated_sharpe(sr_period, len(s), sk, ku,
+                          n_trials=trials, sr_trials_std=max(sr_disp, 1e-6))
 
     out = {
         "rebalances": int(len(s)),

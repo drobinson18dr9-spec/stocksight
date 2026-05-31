@@ -45,8 +45,8 @@ def main():
     # Independent re-derivation from the same prices ----------------------
     close = bars.sort_values("timestamp")["close"].astype(float)
     win = close.tail(sc.TRADING_DAYS + 1)
-    ret = win.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
-    ret = ret.clip(ret.quantile(0.005), ret.quantile(0.995))
+    ret_raw = win.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+    ret = ret_raw.clip(ret_raw.quantile(0.005), ret_raw.quantile(0.995))
     n = len(ret)
     sd = ret.std(ddof=1)
     excess = ret - sc.RF_DAILY
@@ -70,9 +70,9 @@ def main():
     check("12-1 momentum matches P[-22]/P[-253]-1",
           abs(r["momentum_12_1"] - mom_indep) < 1e-9, f"{r['momentum_12_1']:.6f}")
 
-    equity = (1 + ret).cumprod()
+    equity = (1 + ret_raw).cumprod()   # drawdown from RAW returns (matches audit fix)
     dd_indep = float((equity / equity.cummax() - 1).min())
-    check("Max drawdown matches peak-to-trough", abs(r["max_drawdown"] - dd_indep) < 1e-9)
+    check("Max drawdown matches peak-to-trough (raw)", abs(r["max_drawdown"] - dd_indep) < 1e-9)
 
     # Known-value max drawdown: 100->120->60 has DD = -50%
     kp = pd.Series([100, 120, 60.0])

@@ -31,7 +31,10 @@ def cagr(returns: pd.Series, ppy: int = EQUITY_PPY) -> float:
     r = pd.Series(returns).dropna()
     if len(r) < 2:
         return np.nan
-    return float(_eq(r).iloc[-1] ** (ppy / len(r)) - 1)
+    ending = _eq(r).iloc[-1]
+    if ending <= 0:                       # a <=-100% path: total loss (audit fix)
+        return -1.0
+    return float(ending ** (ppy / len(r)) - 1)
 
 
 def ann_vol(returns: pd.Series, ppy: int = EQUITY_PPY) -> float:
@@ -60,9 +63,11 @@ def cvar(returns: pd.Series, alpha: float = 0.05) -> float:
     r = pd.Series(returns).dropna()
     if len(r) < 5:
         return np.nan
-    cutoff = np.quantile(r, alpha)
-    tail = r[r <= cutoff]
-    return float(-tail.mean()) if len(tail) else float(-cutoff)
+    # Average exactly the worst-alpha observations (sorted), so ties at the
+    # quantile don't pull in extra mass and bias ES toward zero (audit fix).
+    k = max(1, int(np.ceil(alpha * len(r))))
+    worst = np.sort(r.values)[:k]
+    return float(-worst.mean())
 
 
 def student_t_var(returns: pd.Series, alpha: float = 0.05) -> float:

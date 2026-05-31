@@ -47,8 +47,10 @@ def w_equal(rets):
 
 
 def w_inverse_vol(rets):
-    iv = 1.0 / rets.std()
-    return iv / iv.sum()
+    iv = 1.0 / rets.std().replace(0, np.nan)      # guard zero-variance (audit fix)
+    iv = iv.fillna(0.0)
+    s = iv.sum()
+    return iv / s if s > 0 else pd.Series(1.0 / rets.shape[1], index=rets.columns)
 
 
 def w_max_sharpe(rets):
@@ -185,7 +187,8 @@ def run(years=5, n=30):
     series["SPY"] = []
     idx = []
     for i in rebal:
-        sc_score = (mom.iloc[i].rank() + lv.iloc[i].rank()).where(elig.iloc[i])
+        # Select on data through i-1, enter at close[i] (no same-day lookahead — audit fix)
+        sc_score = (mom.iloc[i - 1].rank() + lv.iloc[i - 1].rank()).where(elig.iloc[i - 1])
         picks = sc_score.dropna().nlargest(n).index.tolist()
         train = rets[picks].iloc[i - WIN:i].dropna(axis=1, how="any")
         picks = [p for p in picks if p in train.columns]
@@ -193,9 +196,16 @@ def run(years=5, n=30):
             continue
         train = train[picks]
         fwd = (close[picks].iloc[i + HOLD] / close[picks].iloc[i] - 1)
+        valid = fwd.notna()                       # drop names missing a fwd return
+        fwd = fwd[valid]
+        picks_v = list(fwd.index)
+        if len(picks_v) < 5:
+            continue
         for name, fn in ALLOCATORS.items():
             try:
-                w = fn(train).reindex(picks).fillna(0)
+                w = fn(train).reindex(picks_v).fillna(0)
+                if w.sum() <= 0:
+                    series[name].append(np.nan); continue
                 w = w / w.sum()
                 series[name].append(float((w.values * fwd.values).sum()))
             except Exception:

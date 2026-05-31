@@ -58,9 +58,12 @@ def crypto_metrics(bars: pd.DataFrame) -> pd.DataFrame:
             continue
         excess = ret - rf_d
         sharpe = np.sqrt(CRYPTO_PPY) * excess.mean() / ret.std(ddof=1)
-        p_now, p_0 = float(close.iloc[-1]), float(close.iloc[0])
-        p_1m = float(close.iloc[-31]) if len(close) > 31 else p_0
-        mom = p_1m / p_0 - 1 if p_0 > 0 else np.nan      # ~12-1 on crypto calendar
+        # 12-1 momentum anchored to fixed offsets from the latest bar (audit fix):
+        # price ~1 month ago over price ~12 months ago, same window for every coin.
+        p_now = float(close.iloc[-1])
+        p_12m = float(close.iloc[-min(CRYPTO_PPY, len(close))])
+        p_1m = float(close.iloc[-31]) if len(close) > 31 else p_12m
+        mom = p_1m / p_12m - 1 if p_12m > 0 else np.nan
         rows.append({
             "ticker": t, "current_price": round(p_now, 2),
             "sharpe": round(float(sharpe), 3),
