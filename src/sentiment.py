@@ -47,45 +47,81 @@ def _vader():
     return SentimentIntensityAnalyzer()
 
 
-def ticker_sentiment(symbols, lookback_days: int = 21) -> pd.DataFrame:
+def _yahoo_headlines(sym, cutoff):
+    """Per-ticker headlines from Yahoo RSS -> [(text, source), ...]."""
     import feedparser
+    out = []
+    try:
+        for e in feedparser.parse(YAHOO_RSS.format(sym=sym)).entries:
+            pub = e.get("published_parsed") or e.get("updated_parsed")
+            if pub and datetime(*pub[:6], tzinfo=timezone.utc) < cutoff:
+                continue
+            text = f"{e.get('title','')}. {e.get('summary','')[:200]}".strip()
+            if text and text != ".":
+                out.append((text, "yahoo"))
+    except Exception:
+        pass
+    return out
+
+
+def _finnhub_headlines(sym, lookback_days):
+    """Per-ticker headlines from Finnhub company-news (aggregates Benzinga,
+    Reuters, MarketWatch, etc.) -> [(text, source), ...]. Free tier."""
+    import os
+    import requests
+    key = os.environ.get("FINNHUB_API_KEY")
+    if not key:
+        return []
+    frm = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    to = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    out = []
+    try:
+        r = requests.get("https://finnhub.io/api/v1/company-news",
+                         params={"symbol": sym, "from": frm, "to": to, "token": key},
+                         timeout=20)
+        if r.status_code == 200:
+            for a in r.json()[:60]:
+                text = f"{a.get('headline','')}. {a.get('summary','')[:200]}".strip()
+                if text and text != ".":
+                    out.append((text, a.get("source", "finnhub")))
+    except Exception:
+        pass
+    return out
+
+
+def ticker_sentiment(symbols, lookback_days: int = 21) -> pd.DataFrame:
+    """Multi-source per-ticker headline sentiment (Yahoo RSS + Finnhub company
+    news, which itself aggregates Benzinga/Reuters/MarketWatch/etc.), VADER-scored."""
     sia = _vader()
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     rows = []
     for sym in symbols:
-        scores, worst, n_recent, n_neg = [], 0.0, 0, 0
-        try:
-            feed = feedparser.parse(YAHOO_RSS.format(sym=sym))
-            for e in feed.entries:
-                pub = e.get("published_parsed") or e.get("updated_parsed")
-                if pub:
-                    dt = datetime(*pub[:6], tzinfo=timezone.utc)
-                    if dt < cutoff:
-                        continue
-                title = e.get("title", "")
-                summary = e.get("summary", "")[:200]
-                text = f"{title}. {summary}".strip()
-                if not text:
-                    continue
-                c = sia.polarity_scores(text)["compound"]
-                scores.append(c)
-                worst = min(worst, c)
-                n_recent += 1
-                if c < NEG_HEADLINE:
-                    n_neg += 1
-        except Exception:
-            pass
+        items = _yahoo_headlines(sym, cutoff) + _finnhub_headlines(sym, lookback_days)
+        seen, scores, srcs, worst, n_neg = set(), [], set(), 0.0, 0
+        for text, src in items:
+            key = text[:80].lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            c = sia.polarity_scores(text)["compound"]
+            scores.append(c)
+            srcs.add(src)
+            worst = min(worst, c)
+            if c < NEG_HEADLINE:
+                n_neg += 1
         time.sleep(0.05)
+        n = len(scores)
         mean_s = float(pd.Series(scores).mean()) if scores else 0.0
-        share_neg = n_neg / n_recent if n_recent else 0.0
-        veto = bool(n_recent >= VETO_MIN_HEADLINES
+        share_neg = n_neg / n if n else 0.0
+        veto = bool(n >= VETO_MIN_HEADLINES
                     and (mean_s < VETO_MEAN or share_neg >= VETO_SHARE_NEG))
         rows.append({
             "ticker": sym,
             "news_sentiment": round(mean_s, 3),
             "worst_headline": round(worst, 3),
             "share_negative": round(share_neg, 2),
-            "headline_count": n_recent,
+            "headline_count": n,
+            "n_sources": len(srcs),
             "event_veto": veto,
         })
     return pd.DataFrame(rows)
@@ -114,6 +150,9 @@ def apply_veto(candidates: pd.DataFrame, lookback_days: int = 21) -> pd.DataFram
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    from pathlib import Path
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     ap = argparse.ArgumentParser()
     ap.add_argument("--tickers", nargs="+", required=True)
     ap.add_argument("--lookback-days", type=int, default=21)

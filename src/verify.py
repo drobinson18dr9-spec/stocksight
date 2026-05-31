@@ -155,6 +155,17 @@ def main():
     vt = pc.vol_target_scalar(pd.Series(rng3.normal(0, 0.03, 252)), target_vol=0.10)
     check("vol-target scales down a high-vol series (<1)", vt < 1.0)
 
+    # ── Technical patterns ──────────────────────────────────────────────
+    import patterns as pt
+    up_after_down = pd.Series(np.concatenate([np.linspace(100, 60, 230), np.linspace(60, 130, 130)]))
+    down_after_up = pd.Series(np.concatenate([np.linspace(60, 130, 230), np.linspace(130, 60, 130)]))
+    check("golden cross detected on uptrend-after-downtrend",
+          pt.sma_cross(up_after_down)["signal"] == "golden_cross")
+    check("death cross detected on downtrend-after-uptrend",
+          pt.sma_cross(down_after_up)["signal"] == "death_cross")
+    check("sma_cross reports days_since_cross >= 0",
+          (pt.sma_cross(up_after_down)["days_since_cross"] or -1) >= 0)
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed.")
     if FAIL:
         print("FAILED:", ", ".join(FAIL))
