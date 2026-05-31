@@ -110,6 +110,24 @@ def main():
     wn = sc._winsorize(s)
     check("Winsorize caps at the 99.5 pctile", wn.max() <= s.quantile(0.995) + 1e-9)
 
+    # ── New metrics module cross-checks ─────────────────────────────────
+    import metrics as mx
+    rng2 = np.random.default_rng(11)
+    rr = pd.Series(rng2.normal(0.0006, 0.012, 600))
+    mm = pd.Series(rng2.normal(0.0004, 0.010, 600))
+    check("beta(series, itself) == 1", abs(mx.beta(rr, rr) - 1.0) < 1e-9)
+    check("Jensen's alpha(market, itself) == 0", abs(mx.jensens_alpha(mm, mm)) < 1e-9)
+    check("CVaR >= VaR (tail mean worse than quantile)",
+          mx.cvar(rr, 0.05) >= mx.var_historical(rr, 0.05) - 1e-12)
+    check("Information ratio(r, itself) is nan (zero active)", np.isnan(mx.information_ratio(rr, rr)))
+    check("Ulcer index >= 0", mx.ulcer_index(rr) >= 0)
+    # Calmar known: CAGR / |maxDD|, cross-checked against components
+    cl, cg, md = mx.calmar(rr), mx.cagr(rr), mx.max_drawdown(rr)
+    check("Calmar == CAGR / |maxDD|", abs(cl - cg / abs(md)) < 1e-9)
+    # Omega about a very low threshold (all returns above) -> infinite
+    check("Omega -> inf when no losses below threshold", np.isinf(mx.omega(rr, mar=rr.min() - 1)))
+    check("Student-t VaR finite and positive", np.isfinite(mx.student_t_var(rr)) and mx.student_t_var(rr) > 0)
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed.")
     if FAIL:
         print("FAILED:", ", ".join(FAIL))
