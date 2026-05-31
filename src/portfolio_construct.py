@@ -109,8 +109,50 @@ def w_hrp(rets):
     return w.reindex(rets.columns)
 
 
+def _ivp(cov_df):
+    iv = 1.0 / np.diag(cov_df.values)
+    iv /= iv.sum()
+    return pd.Series(iv, index=cov_df.index)
+
+
+def w_nco(rets):
+    """Nested Clustered Optimization (Lopez de Prado 2019): inverse-variance
+    weights WITHIN correlation clusters, inverse-variance ACROSS clusters, then
+    the dot product. Contains instability inside clusters where Markowitz blows up."""
+    from scipy.cluster.hierarchy import fcluster
+    cov, corr = rets.cov(), rets.corr()
+    n = len(corr)
+    if n < 3:
+        return _ivp(cov)
+    dist = ((1 - corr) / 2.0) ** 0.5
+    link = linkage(squareform(dist.values, checks=False), "ward")
+    k = max(2, int(np.sqrt(n)))
+    labels = fcluster(link, k, criterion="maxclust")
+    clusters = {}
+    for asset, lab in zip(corr.index, labels):
+        clusters.setdefault(lab, []).append(asset)
+    inner = pd.Series(0.0, index=corr.index)
+    cl_rets = pd.DataFrame(index=rets.index)
+    for lab, members in clusters.items():
+        wi = _ivp(cov.loc[members, members])
+        inner[members] = wi.values
+        cl_rets[lab] = (rets[members] * wi).sum(axis=1)
+    outer = _ivp(cl_rets.cov())
+    final = inner.copy()
+    for lab, members in clusters.items():
+        final[members] *= outer[lab]
+    return (final / final.sum()).reindex(rets.columns)
+
+
+def vol_target_scalar(returns, target_vol=0.10, ppy=252, cap=2.0):
+    """Leverage/dilution scalar to hit a target annual vol (Man Group 2018:
+    raises Sharpe on equity/credit, cuts tails everywhere). Capped, no shorting."""
+    rv = pd.Series(returns).dropna().std(ddof=1) * np.sqrt(ppy)
+    return float(min(target_vol / rv, cap)) if rv > 0 else 1.0
+
+
 ALLOCATORS = {"EqualWeight": w_equal, "InverseVol": w_inverse_vol,
-              "MaxSharpe": w_max_sharpe, "HRP": w_hrp}
+              "MaxSharpe": w_max_sharpe, "HRP": w_hrp, "NCO": w_nco}
 
 
 def stats(r, ppy):

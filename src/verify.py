@@ -128,6 +128,33 @@ def main():
     check("Omega -> inf when no losses below threshold", np.isinf(mx.omega(rr, mar=rr.min() - 1)))
     check("Student-t VaR finite and positive", np.isfinite(mx.student_t_var(rr)) and mx.student_t_var(rr) > 0)
 
+    # ── New module cross-checks (crypto, regime, validation, NCO) ───────
+    import regime, validation
+    import portfolio_construct as pc
+    import crypto_sleeve as cz
+    rng3 = np.random.default_rng(5)
+
+    check("recession_prob(spread=0) ~ 0.297", abs(regime.recession_prob(0) - 0.2969) < 0.01)
+    check("recession_prob falls as spread rises", regime.recession_prob(-1) > regime.recession_prob(1))
+
+    ew = pd.Series({"A": 0.5, "B": 0.5}); cw = pd.Series({"BTC-USD": 0.6, "ETH-USD": 0.4})
+    comb = cz.combine(ew, cw, crypto_cap=0.10)
+    check("crypto cap: crypto sleeve == 10%",
+          abs(comb[comb.sleeve == "crypto"].weight.sum() - 0.10) < 1e-9)
+    check("crypto cap: equity sleeve == 90%",
+          abs(comb[comb.sleeve == "equity"].weight.sum() - 0.90) < 1e-9)
+    check("combined weights sum to 1", abs(comb.weight.sum() - 1.0) < 1e-9)
+
+    pbo = validation.pbo_cscv(pd.DataFrame(rng3.normal(0, 0.01, (240, 16))), S=8)
+    check("PBO is a probability in [0,1]", 0 <= pbo <= 1)
+
+    rr = pd.DataFrame(rng3.normal(0, 0.01, (252, 8)), columns=[f"X{i}" for i in range(8)])
+    wn = pc.w_nco(rr)
+    check("NCO weights sum to 1", abs(wn.sum() - 1.0) < 1e-6)
+    check("NCO weights non-negative", bool((wn >= -1e-9).all()))
+    vt = pc.vol_target_scalar(pd.Series(rng3.normal(0, 0.03, 252)), target_vol=0.10)
+    check("vol-target scales down a high-vol series (<1)", vt < 1.0)
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed.")
     if FAIL:
         print("FAILED:", ", ".join(FAIL))
