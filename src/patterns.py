@@ -77,16 +77,64 @@ def cup_and_handle(close: pd.Series, window: int = 130) -> dict:
     }
 
 
-def signals(close: pd.Series) -> dict:
+def supertrend(high: pd.Series, low: pd.Series, close: pd.Series,
+               atr_len: int = 10, mult: float = 3.0) -> dict:
+    """Supertrend (ATR-based) discrete trend state. Deterministic from OHLC.
+    Returns trend ('up'/'down'), the line value, and distance of close to it."""
+    h, l, c = (pd.Series(high).astype(float), pd.Series(low).astype(float),
+               pd.Series(close).astype(float))
+    if len(c) < atr_len + 2:
+        return {"trend": "n/a"}
+    prev = c.shift(1)
+    tr = pd.concat([h - l, (h - prev).abs(), (l - prev).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(atr_len).mean()
+    hl2 = (h + l) / 2
+    ub = (hl2 + mult * atr).values
+    lb = (hl2 - mult * atr).values
+    cv = c.values
+    n = len(cv)
+    valid = ~np.isnan(ub)
+    if valid.sum() < 2:
+        return {"trend": "n/a"}
+    first = int(np.argmax(valid))               # first bar with a valid ATR band
+    fub = np.full(n, np.nan); flb = np.full(n, np.nan); trend = np.ones(n)
+    fub[first], flb[first] = ub[first], lb[first]
+    for i in range(first + 1, n):
+        # Carry the band forward; reset cleanly if the prior band was NaN.
+        fub[i] = ub[i] if (np.isnan(fub[i-1]) or ub[i] < fub[i-1] or cv[i-1] > fub[i-1]) else fub[i-1]
+        flb[i] = lb[i] if (np.isnan(flb[i-1]) or lb[i] > flb[i-1] or cv[i-1] < flb[i-1]) else flb[i-1]
+        if trend[i-1] > 0:                       # was uptrend (line = lower band)
+            trend[i] = -1 if cv[i] < flb[i] else 1
+        else:                                    # was downtrend (line = upper band)
+            trend[i] = 1 if cv[i] > fub[i] else -1
+    line = float(flb[-1] if trend[-1] > 0 else fub[-1])
+    return {"trend": "up" if trend[-1] > 0 else "down",
+            "supertrend": round(line, 2),
+            "dist": round(float(cv[-1] / line - 1), 4) if line else None}
+
+
+def pct_to_52w_high(close: pd.Series, window: int = 252) -> float:
+    """George-Hwang nearness to the 52-week high: close / max(close, 252d)."""
+    c = pd.Series(close).astype(float).dropna()
+    hi = c.tail(window).max()
+    return float(c.iloc[-1] / hi) if hi > 0 else float("nan")
+
+
+def signals(close: pd.Series, high: pd.Series | None = None,
+            low: pd.Series | None = None) -> dict:
     """Compact technical-signal bundle for one name."""
     x = sma_cross(close)
     cup = cup_and_handle(close)
-    return {
+    out = {
         "ma_signal": x["signal"],
         "ma_above_200": x.get("above"),
         "days_since_cross": x.get("days_since_cross"),
         "cup_and_handle": cup["detected"],
+        "pct_to_52w_high": round(pct_to_52w_high(close), 3),
     }
+    if high is not None and low is not None:
+        out["supertrend"] = supertrend(high, low, close)["trend"]
+    return out
 
 
 if __name__ == "__main__":

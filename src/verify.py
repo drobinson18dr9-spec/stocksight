@@ -165,6 +165,13 @@ def main():
           pt.sma_cross(down_after_up)["signal"] == "death_cross")
     check("sma_cross reports days_since_cross >= 0",
           (pt.sma_cross(up_after_down)["days_since_cross"] or -1) >= 0)
+    up = pd.Series(np.linspace(50, 150, 260))
+    # Supertrend flips on sharp moves, not gradual drift, so test a regime break.
+    crash = pd.Series(np.concatenate([np.full(220, 100.0), np.full(40, 70.0)]))
+    check("Supertrend = up on a clean uptrend", pt.supertrend(up * 1.01, up * 0.99, up)["trend"] == "up")
+    check("Supertrend = down after a sharp break", pt.supertrend(crash, crash, crash)["trend"] == "down")
+    check("pct_to_52w_high in (0,1]", 0 < pt.pct_to_52w_high(up) <= 1.0001)
+    check("compute_metrics emits pth_52w in (0,1]", 0 < r["pth_52w"] <= 1.0001)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed.")
     if FAIL:

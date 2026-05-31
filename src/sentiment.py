@@ -89,14 +89,34 @@ def _finnhub_headlines(sym, lookback_days):
     return out
 
 
+def _seekingalpha_headlines(sym, cutoff):
+    """Per-ticker headlines from Seeking Alpha combined RSS (no key)."""
+    import feedparser
+    out = []
+    try:
+        feed = feedparser.parse(f"https://seekingalpha.com/api/sa/combined/{sym}.xml")
+        for e in feed.entries[:40]:
+            pub = e.get("published_parsed") or e.get("updated_parsed")
+            if pub and datetime(*pub[:6], tzinfo=timezone.utc) < cutoff:
+                continue
+            text = f"{e.get('title','')}. {e.get('summary','')[:200]}".strip()
+            if text and text != ".":
+                out.append((text, "seekingalpha"))
+    except Exception:
+        pass
+    return out
+
+
 def ticker_sentiment(symbols, lookback_days: int = 21) -> pd.DataFrame:
-    """Multi-source per-ticker headline sentiment (Yahoo RSS + Finnhub company
-    news, which itself aggregates Benzinga/Reuters/MarketWatch/etc.), VADER-scored."""
+    """Multi-source per-ticker headline sentiment: Yahoo RSS + Finnhub company
+    news (aggregates Benzinga/Reuters/MarketWatch/etc.) + Seeking Alpha RSS,
+    deduped and VADER-scored."""
     sia = _vader()
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     rows = []
     for sym in symbols:
-        items = _yahoo_headlines(sym, cutoff) + _finnhub_headlines(sym, lookback_days)
+        items = (_yahoo_headlines(sym, cutoff) + _finnhub_headlines(sym, lookback_days)
+                 + _seekingalpha_headlines(sym, cutoff))
         seen, scores, srcs, worst, n_neg = set(), [], set(), 0.0, 0
         for text, src in items:
             key = text[:80].lower()

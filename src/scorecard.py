@@ -255,6 +255,11 @@ def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
         recent = g.tail(TRADING_DAYS)
         med_dollar_vol = float((recent["close"] * recent["volume"]).median())
 
+        # ── 52-week-high nearness (George & Hwang 2004): best-evidenced
+        #    cross-sectional signal, independent of 12-1 momentum. PTH in (0,1].
+        high_252 = float(close_all.tail(TRADING_DAYS).max())
+        pth_52w = float(p1 / high_252) if high_252 > 0 else np.nan
+
         rows.append({
             "ticker": ticker,
             "current_price": round(p1, 2),
@@ -264,6 +269,7 @@ def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
             "sharpe_tstat": sharpe_tstat,
             "sortino": sortino,
             "momentum_12_1": momentum,
+            "pth_52w": pth_52w,
             "max_drawdown": max_dd,
             "above_200d_trend": above_trend,
             "med_dollar_vol": med_dollar_vol,
@@ -317,9 +323,10 @@ def score(metrics: pd.DataFrame) -> pd.DataFrame:
     and standardized robustly so no single outlier dominates the ranking."""
     df = metrics.copy()
     df["composite"] = (
-        0.30 * _robust_z(df["sharpe"])
-        + 0.25 * _robust_z(df["sortino"])
-        + 0.25 * _robust_z(df["momentum_12_1"])
+        0.25 * _robust_z(df["sharpe"])
+        + 0.20 * _robust_z(df["sortino"])
+        + 0.20 * _robust_z(df["momentum_12_1"])
+        + 0.15 * _robust_z(df["pth_52w"])           # 52-week-high nearness (George-Hwang)
         + 0.10 * _robust_z(df["max_drawdown"])      # less-negative dd scores higher
         + 0.10 * df["above_200d_trend"].astype(float)
     )
