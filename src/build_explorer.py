@@ -26,6 +26,27 @@ import predict as pr
 ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "predict"
 
 
+def _yf_bars(tickers, start, end):
+    """Daily bars from Yahoo for tickers Alpaca lacks (OTC/ADRs). Returns a
+    long DataFrame matching the Alpaca schema (ticker, timestamp, close, volume)."""
+    import yfinance as yf
+    frames = []
+    for t in tickers:
+        try:
+            h = yf.Ticker(t).history(start=start.strftime("%Y-%m-%d"),
+                                     end=end.strftime("%Y-%m-%d"), auto_adjust=True)
+            if len(h) >= 300:
+                df = h.reset_index()[["Date", "Close", "Volume"]]
+                df.columns = ["timestamp", "close", "volume"]
+                df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
+                df["ticker"] = t
+                frames.append(df)
+        except Exception:
+            pass
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
+        columns=["timestamp", "close", "volume", "ticker"])
+
+
 def portfolio_tickers(top_n=12, extra_good=28) -> list[str]:
     """Portfolio names plus the top GOOD-rated names, so the explorer covers a
     meaningful default set (any other ticker is available on demand)."""
@@ -66,6 +87,15 @@ def main(tickers=None, test_days=20, horizon=15,
     start = datetime.now(timezone.utc) - timedelta(days=int(3 * 365) + 60)
     end = datetime.now(timezone.utc) - timedelta(days=1)
     bars = sc.fetch_bars(tickers, start, end)
+
+    # Fallback: any ticker Alpaca lacks (e.g. OTC/ADRs like RYCEY) -> Yahoo.
+    have = {t for t, g in bars.groupby("ticker") if len(g) >= 300}
+    missing = [t for t in tickers if t not in have]
+    if missing:
+        yb = _yf_bars(missing, start, end)
+        if len(yb):
+            bars = pd.concat([bars, yb], ignore_index=True)
+            print(f"  yfinance fallback supplied {yb['ticker'].nunique()} names")
 
     done = []
     for t in tickers:

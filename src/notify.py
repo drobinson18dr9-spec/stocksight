@@ -95,7 +95,12 @@ def _slack(msg: str) -> bool:
 
 
 def send(msg: str) -> None:
-    for fn in (_twilio, _email_sms, _telegram, _slack):
+    # Skip Twilio entirely while A2P is pending (avoids burning SMS that the
+    # carrier rejects anyway). Remove DISABLE_TWILIO once A2P is approved.
+    channels = (_twilio, _email_sms, _telegram, _slack)
+    if os.environ.get("DISABLE_TWILIO"):
+        channels = (_email_sms, _telegram, _slack)
+    for fn in channels:
         try:
             if fn(msg):
                 return
