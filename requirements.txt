@@ -15,3 +15,5 @@ arch>=6.0
 xgboost>=2.0
 yfinance>=0.2.40
 pynacl>=1.5
+pyjwt>=2.8
+cryptography>=42.0
