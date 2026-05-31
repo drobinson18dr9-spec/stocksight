@@ -28,6 +28,9 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
 
+      - name: Verify math (formula test suite, fails the run on any mismatch)
+        run: python src/verify.py
+
       - name: Run scorecard and send alert text
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
