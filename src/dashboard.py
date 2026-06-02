@@ -231,6 +231,10 @@ For research and education. Do your own diligence.</footer>
     out.write_text(html, encoding="utf-8")
     print(f"Wrote dashboard: {out}")
     build_forecasts()
+    try:
+        import policy_pages; policy_pages.write()
+    except Exception as e:
+        print(f"policy_pages skipped: {e}")
 
 
 def build_forecasts():
