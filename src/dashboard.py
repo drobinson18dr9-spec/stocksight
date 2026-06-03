@@ -186,14 +186,17 @@ def build(universe_limit=None):
  .summary{{display:flex;gap:14px;flex-wrap:wrap;padding:16px 22px}}
  .card{{background:#fff;border-radius:10px;padding:12px 18px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
  .card .n{{font-size:24px;font-weight:700}} .good{{color:#1a9850}} .bad{{color:#d73027}}
- .tabs{{padding:0 22px;display:flex;gap:8px;flex-wrap:wrap}}
- .tabs button{{border:0;background:#e6e9f0;padding:9px 14px;border-radius:8px;cursor:pointer;font-size:14px}}
+ .tabs{{padding:0 22px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
+ .tabs button,.tabs .tablink{{border:0;background:#e6e9f0;padding:9px 14px;border-radius:8px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;line-height:1;text-decoration:none;color:#1a1a2e}}
  .tabs button:hover{{background:#d3d8e6}}
- .chart{{display:none;margin:14px 22px;background:#fff;border-radius:10px;padding:8px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
+ .tabs .tablink{{background:#0f1b3d;color:#fff}}
+ .chart{{display:none;margin:14px 22px;background:#fff;border-radius:10px;padding:8px;box-shadow:0 1px 4px rgba(0,0,0,.08);overflow:hidden}}
  #picks{{display:block}}
+ .scroll{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
  table{{border-collapse:collapse;width:100%;font-size:14px}}
- th,td{{padding:8px 10px;text-align:left;border-bottom:1px solid #eee}} th{{background:#f0f2f7}}
+ th,td{{padding:8px 10px;text-align:left;border-bottom:1px solid #eee;white-space:nowrap}} th{{background:#f0f2f7}}
  footer{{padding:18px 22px;color:#777;font-size:12px}}
+ @media (max-width:600px){{ header h1{{font-size:19px}} .chart{{margin:10px}} table{{font-size:12px}} }}
 </style></head><body>
 <header>
   <h1>StockSight Daily Scorecard</h1>
@@ -206,9 +209,9 @@ def build(universe_limit=None):
   <div class="card"><div class="n bad">{len(bad)}</div>BAD</div>
   <div class="card"><div class="n">{len(portfolio)}</div>in portfolio</div>
 </div>
-<div class="tabs">{tab_btns}<a href="forecasts.html" style="text-decoration:none"><button style="background:#0f1b3d;color:#fff">Model Forecasts &rarr;</button></a></div>
-<div id="picks" class="chart"><h3 style="margin:6px 10px">Optimized portfolio</h3>{table}</div>
-<div id="fundamentals" class="chart">{fund_table}</div>
+<div class="tabs">{tab_btns}<a class="tablink" href="forecasts.html">Model Forecasts &rarr;</a></div>
+<div id="picks" class="chart"><h3 style="margin:6px 10px">Optimized portfolio</h3><div class="scroll">{table}</div></div>
+<div id="fundamentals" class="chart"><div class="scroll">{fund_table}</div></div>
 <div id="risk" class="chart">{_div(f1, first=True)}</div>
 <div id="vsspy" class="chart">{_div(f2)}</div>
 <div id="weights" class="chart">{_div(f3)}</div>

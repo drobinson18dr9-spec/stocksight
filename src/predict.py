@@ -39,6 +39,7 @@ import scorecard as sc
 
 PRED_DIR = Path(__file__).resolve().parents[1] / "reports" / "predict"
 CHART_DIR = Path(__file__).resolve().parents[1] / "reports" / "charts"
+MIN_HISTORY_FORECAST = 120     # allow recent IPOs (~6 months) to be forecast
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -132,7 +133,9 @@ def _safe(fn, train, h):
 # ──────────────────────────────────────────────────────────────────────
 def walk_forward(prices: pd.Series, test_days: int) -> pd.DataFrame:
     n = len(prices)
-    start = max(252, n - test_days)
+    # Warmup = up to 252 bars, but shrink for short-history (recent-IPO) names so
+    # there's still a test window; keep >= 60 bars of training (audit/IPO fix).
+    start = min(max(60, n - test_days), n - 5)
     rows = []
     for origin in range(start, n):
         train = prices.iloc[:origin]
@@ -209,7 +212,7 @@ def run(ticker: str, test_days: int = 40, horizon: int = 21) -> dict:
     end = datetime.now(timezone.utc) - timedelta(days=1)
     bars = sc.fetch_bars([ticker], start, end)   # targeted single-ticker pull
     s = bars[bars["ticker"] == ticker].sort_values("timestamp")
-    if len(s) < 300:
+    if len(s) < MIN_HISTORY_FORECAST:
         raise SystemExit(f"{ticker}: not enough history ({len(s)} bars).")
     prices = pd.Series(s["close"].values, index=pd.to_datetime(s["timestamp"].values)).astype(float)
 

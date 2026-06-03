@@ -24,6 +24,7 @@ import scorecard as sc
 import predict as pr
 
 ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "predict"
+MIN_HISTORY_FORECAST = pr.MIN_HISTORY_FORECAST    # recent-IPO floor (~6 months)
 
 
 def _yf_bars(tickers, start, end):
@@ -35,7 +36,7 @@ def _yf_bars(tickers, start, end):
         try:
             h = yf.Ticker(t).history(start=start.strftime("%Y-%m-%d"),
                                      end=end.strftime("%Y-%m-%d"), auto_adjust=True)
-            if len(h) >= 300:
+            if len(h) >= MIN_HISTORY_FORECAST:
                 df = h.reset_index()[["Date", "Close", "Volume"]]
                 df.columns = ["timestamp", "close", "volume"]
                 df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
@@ -92,7 +93,7 @@ def main(tickers=None, test_days=20, horizon=15,
         bars = pd.DataFrame(columns=["ticker", "timestamp", "close", "volume"])
 
     # Fallback: any ticker Alpaca lacks (e.g. OTC/ADRs like RYCEY) -> Yahoo.
-    have = {t for t, g in bars.groupby("ticker") if len(g) >= 300} if len(bars) else set()
+    have = {t for t, g in bars.groupby("ticker") if len(g) >= MIN_HISTORY_FORECAST} if len(bars) else set()
     missing = [t for t in tickers if t not in have]
     if missing:
         yb = _yf_bars(missing, start, end)
@@ -103,7 +104,7 @@ def main(tickers=None, test_days=20, horizon=15,
     done = []
     for t in tickers:
         s = bars[bars["ticker"] == t].sort_values("timestamp")
-        if len(s) < 300:
+        if len(s) < MIN_HISTORY_FORECAST:
             print(f"  {t}: insufficient history, skipped")
             continue
         prices = pd.Series(s["close"].values,

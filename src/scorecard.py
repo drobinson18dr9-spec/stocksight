@@ -58,8 +58,10 @@ TICKER_FILE = DATA_DIR / "Ticker List.xlsx"
 RISK_FREE_RATE = 0.04                       # annual risk-free rate
 TRADING_DAYS = 252                          # standard annualization factor
 RF_DAILY = (1 + RISK_FREE_RATE) ** (1 / TRADING_DAYS) - 1   # geometric daily rf
-MIN_HISTORY = TRADING_DAYS + 1              # need >= 1y of closes to screen
-MIN_OBS = 200                               # min usable daily returns in window
+MIN_HISTORY = TRADING_DAYS + 1              # full-history names: >= 1y of closes
+MIN_OBS = 200                               # min usable daily returns (full hist)
+MIN_HISTORY_IPO = 60                        # recent IPOs: >= ~3 months of closes
+MIN_OBS_IPO = 40                            # recent IPOs: min usable daily returns
 BENCHMARK = "SPY"
 
 # Return winsorization (guards against bad ticks / data errors)
@@ -206,16 +208,21 @@ def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
     for ticker, g in bars.groupby("ticker"):
         g = g.sort_values("timestamp")
         close_all = g["close"].astype(float)
-        if len(close_all) < MIN_HISTORY:
+        # Recent-IPO branch: admit names with >= MIN_HISTORY_IPO bars (e.g. CRCL,
+        # 249 bars) using an adaptive window, flagged is_recent_ipo (audit fix).
+        if len(close_all) < MIN_HISTORY_IPO:
             continue
+        is_recent_ipo = len(close_all) < MIN_HISTORY
+        win = min(TRADING_DAYS + 1, len(close_all))
+        min_obs = MIN_OBS if not is_recent_ipo else MIN_OBS_IPO
 
-        # Trailing window: TRADING_DAYS+1 closes -> TRADING_DAYS returns
-        close = close_all.tail(TRADING_DAYS + 1)
+        # Trailing window: up to TRADING_DAYS+1 closes -> returns
+        close = close_all.tail(win)
         ret_raw = close.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
         ret = _winsorize(ret_raw)                 # winsorized: for moment estimators
         n = len(ret)
         sd = ret.std(ddof=1)                      # sample std
-        if n < MIN_OBS or not np.isfinite(sd) or sd == 0:
+        if n < min_obs or not np.isfinite(sd) or sd == 0:
             continue
 
         # ── Sharpe (annualized) and its significance ─────────────────
@@ -239,10 +246,17 @@ def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
         dd_dev = np.sqrt(downside_sq.mean())
         sortino = np.sqrt(TRADING_DAYS) * (mean_excess / dd_dev) if dd_dev > 0 else np.nan
 
-        # ── 12-1 momentum: P[t-21] / P[t-252] - 1 ────────────────────
-        p_12m = float(close_all.iloc[-(TRADING_DAYS + 1)])   # ~12 months ago
-        p_1m = float(close_all.iloc[-22])                    # ~1 month ago
+        # ── 12-1 momentum: P[t-21] / P[t-252] - 1 (adaptive for short hist) ──
+        if len(close_all) >= TRADING_DAYS + 1:
+            p_12m = float(close_all.iloc[-(TRADING_DAYS + 1)])   # ~12 months ago
+        else:
+            p_12m = float(close_all.iloc[0])                     # oldest available
+        p_1m = float(close_all.iloc[-22]) if len(close_all) > 22 else float(close_all.iloc[0])
         momentum = p_1m / p_12m - 1 if p_12m > 0 else np.nan
+
+        # ── Fast signals so a daily view actually moves (cadence fix) ──
+        mom_21 = float(p1 / close_all.iloc[-22] - 1) if len(close_all) > 22 else np.nan   # 1mo
+        mom_63 = float(p1 / close_all.iloc[-64] - 1) if len(close_all) > 64 else np.nan   # 3mo
 
         # ── Max drawdown over the window (RAW returns: winsorizing clips
         #    the exact crash days that drive drawdown — audit fix) ──────
@@ -250,9 +264,10 @@ def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
         max_dd = float((equity / equity.cummax() - 1).min())
 
         # ── Trend and liquidity (median = robust to spikes) ──────────
-        sma200 = float(close_all.tail(200).mean())
+        sma_win = min(200, len(close_all))
+        sma200 = float(close_all.tail(sma_win).mean())
         above_trend = bool(p1 > sma200)
-        recent = g.tail(TRADING_DAYS)
+        recent = g.tail(win)
         med_dollar_vol = float((recent["close"] * recent["volume"]).median())
 
         # ── 52-week-high nearness (George & Hwang 2004): best-evidenced
@@ -269,9 +284,12 @@ def compute_metrics(bars: pd.DataFrame) -> pd.DataFrame:
             "sharpe_tstat": sharpe_tstat,
             "sortino": sortino,
             "momentum_12_1": momentum,
+            "mom_21": mom_21,
+            "mom_63": mom_63,
             "pth_52w": pth_52w,
             "max_drawdown": max_dd,
             "above_200d_trend": above_trend,
+            "is_recent_ipo": is_recent_ipo,
             "med_dollar_vol": med_dollar_vol,
             "n_obs": n,
         })
@@ -499,15 +517,25 @@ def write_reports(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str) -> s
             f"{r['momentum_12_1']*100:.0f}% | {reason_for(r)} |"
         )
 
-    lines += ["", "## Optimized portfolio (max-Sharpe, shrinkage covariance)", ""]
+    lines += ["", "## Optimized portfolio (HRP) — with a $1,000 example", ""]
     if len(portfolio):
-        lines.append("| Ticker | Weight | Sharpe | Momentum | Why |")
-        lines.append("|--------|--------|--------|----------|-----|")
+        lines.append("| Ticker | Weight | Price | $1,000 buys | Sharpe | Momentum |")
+        lines.append("|--------|--------|-------|-------------|--------|----------|")
         for _, r in portfolio.iterrows():
+            dollars = 1000 * r["weight"]
+            shares = dollars / r["current_price"] if r["current_price"] else 0
             lines.append(
-                f"| {r['ticker']} | {r['weight']*100:.1f}% | {r['sharpe']:.2f} | "
-                f"{r['momentum_12_1']*100:.0f}% | {reason_for(r)} |"
+                f"| {r['ticker']} | {r['weight']*100:.1f}% | ${r['current_price']:.2f} | "
+                f"${dollars:.0f} ({shares:.3f} sh) | {r['sharpe']:.2f} | "
+                f"{r['momentum_12_1']*100:.0f}% |"
             )
+        lines += [
+            "",
+            "Honest note on $1,000: this needs fractional shares, and at this size",
+            "the ~1-month expected move (~+$6 to +$10) is dwarfed by normal swings",
+            "(~+/-$20 to $40). The backtest does not beat SPY, so treat this as a",
+            "disciplined, risk-managed allocation, not an edge that 'hits'.",
+        ]
     else:
         lines.append("No names cleared the screen today.")
 
@@ -566,9 +594,12 @@ def build_sms(scored: pd.DataFrame, portfolio: pd.DataFrame, asof: str,
     lines = [f"{title} {asof}", "", "Top picks:"]
     if len(good):
         for _, r in good.iterrows():
-            lines.append(f"  {nm(r['ticker'])}  ${r['current_price']:.2f}  "
+            m1 = r.get("mom_21")
+            m1s = f"  1mo {m1*100:+.0f}%" if m1 is not None and not pd.isna(m1) else ""
+            ipo = " [IPO]" if r.get("is_recent_ipo") else ""
+            lines.append(f"  {nm(r['ticker'])}{ipo}  ${r['current_price']:.2f}  "
                          f"Sharpe {r['sharpe']:.1f}  Mom {r['momentum_12_1']*100:.0f}%"
-                         + _sent_tag(r))
+                         + m1s + _sent_tag(r))
     else:
         lines.append("  none cleared the screen")
     lines += ["", "Portfolio (HRP):"]
