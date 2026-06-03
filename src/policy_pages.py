@@ -82,11 +82,51 @@ TERMS = """<!doctype html><html><head><meta charset="utf-8">
 </body></html>"""
 
 
+OPTIN = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StockSight SMS Opt-In</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:620px;margin:40px auto;padding:0 18px;color:#1a1a2e;line-height:1.55}
+h1{font-size:24px}label{display:block;margin:14px 0 4px;font-weight:600}
+input[type=tel],input[type=text]{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:16px;box-sizing:border-box}
+.consent{display:flex;gap:10px;align-items:flex-start;margin:16px 0;font-size:14px}
+button{margin-top:14px;background:#0f1b3d;color:#fff;border:0;padding:11px 18px;border-radius:8px;font-size:16px;cursor:pointer}
+.fine{color:#666;font-size:13px;margin-top:18px}</style></head><body>
+<h1>StockSight SMS Alerts — Opt In</h1>
+<p>StockSight sends a daily portfolio summary and price/sentiment alerts derived
+from public market data. To receive these text messages, enter your mobile number
+and confirm your consent below.</p>
+<form onsubmit="event.preventDefault();document.getElementById('ok').style.display='block';">
+  <label for="name">Name</label>
+  <input type="text" id="name" autocomplete="name" required>
+  <label for="phone">Mobile number</label>
+  <input type="tel" id="phone" placeholder="+1 555 123 4567" autocomplete="tel" required>
+  <div class="consent">
+    <input type="checkbox" id="consent" required>
+    <label for="consent" style="font-weight:400;margin:0">
+      I agree to receive automated SMS alerts from StockSight at the number above.
+      Consent is not a condition of any purchase. Up to 2 messages per business day.
+      Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. See our
+      <a href="privacy.html">Privacy Policy</a> and <a href="terms.html">Terms of Service</a>.
+    </label>
+  </div>
+  <button type="submit">Opt in to StockSight alerts</button>
+  <p id="ok" style="display:none;color:#1a9850">Thank you — your opt-in has been recorded.</p>
+</form>
+<p class="fine">By submitting, you confirm you are the subscriber or authorized user of
+the number provided and consent to receive recurring automated marketing/informational
+texts from StockSight. Frequency: up to 2 msgs/business day. Msg &amp; data rates may apply.
+Carriers are not liable for delayed or undelivered messages. Reply STOP to unsubscribe,
+HELP for help. Contact: drobinson18.dr9@gmail.com.</p>
+<p><a href="index.html">&larr; back to StockSight</a></p>
+</body></html>"""
+
+
 def write():
     SITE.mkdir(parents=True, exist_ok=True)
     (SITE / "privacy.html").write_text(PRIVACY, encoding="utf-8")
     (SITE / "terms.html").write_text(TERMS, encoding="utf-8")
-    print(f"Wrote privacy.html and terms.html to {SITE}")
+    (SITE / "optin.html").write_text(OPTIN, encoding="utf-8")
+    print(f"Wrote privacy.html, terms.html, optin.html to {SITE}")
 
 
 if __name__ == "__main__":
