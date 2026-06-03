@@ -32,7 +32,7 @@ PRIVACY = """<!doctype html><html><head><meta charset="utf-8">
 <p>Data is used only to compute the Operator's daily portfolio summaries and sentiment alerts. No data is sold, rented, or shared with third parties. No advertising, profiling, or tracking is performed.</p>
 
 <h2>4. SMS messaging</h2>
-<p>The Operator has self-consented to receive automated SMS via Twilio (A2P 10DLC). Reply <b>STOP</b>, <b>STOPALL</b>, <b>CANCEL</b>, <b>END</b>, <b>QUIT</b>, <b>UNSUBSCRIBE</b>, or <b>REVOKE</b> at any time to opt out. Reply <b>HELP</b> or <b>INFO</b> for help. Message frequency: up to 2 messages per business day. Message and data rates may apply.</p>
+<p>The Operator has self-consented to receive automated SMS via Twilio (A2P 10DLC). Reply <b>STOP</b>, <b>STOPALL</b>, <b>CANCEL</b>, <b>END</b>, <b>QUIT</b>, <b>UNSUBSCRIBE</b>, or <b>REVOKE</b> at any time to opt out. Reply <b>HELP</b> or <b>INFO</b> for help. Message frequency varies. Message and data rates may apply.</p>
 
 <h2>5. Mobile information sharing</h2>
 <p>No mobile information, including phone numbers and opt-in consent data, is shared with third parties or affiliates for marketing or promotional purposes.</p>
@@ -61,7 +61,7 @@ TERMS = """<!doctype html><html><head><meta charset="utf-8">
 <p>By using the service, the Operator agrees to these Terms.</p>
 
 <h2>3. SMS terms</h2>
-<p>By opting in, the Operator agrees to receive automated SMS alerts. Reply <b>STOP</b> to cancel and <b>HELP</b> for help. Up to 2 messages per business day. Message and data rates may apply. Supported carriers are not liable for delayed or undelivered messages.</p>
+<p>By opting in, the Operator agrees to receive automated SMS alerts. Reply <b>STOP</b> to cancel and <b>HELP</b> for help. Message frequency varies. Message and data rates may apply. Supported carriers are not liable for delayed or undelivered messages.</p>
 
 <h2>4. No investment advice</h2>
 <p>All output of StockSight, including any picks, portfolio weights, forecasts, sentiment scores, and risk metrics, is analytical research, not investment, legal, tax, or financial advice. Past performance does not guarantee future results. The Operator is solely responsible for any investment decisions.</p>
@@ -91,7 +91,7 @@ input[type=tel],input[type=text]{width:100%;padding:10px;border:1px solid #ccc;b
 .consent{display:flex;gap:10px;align-items:flex-start;margin:16px 0;font-size:14px}
 button{margin-top:14px;background:#0f1b3d;color:#fff;border:0;padding:11px 18px;border-radius:8px;font-size:16px;cursor:pointer}
 .fine{color:#666;font-size:13px;margin-top:18px}</style></head><body>
-<h1>StockSight SMS Alerts — Opt In</h1>
+<h1>StockSight SMS Alerts: Opt In</h1>
 <p>StockSight sends a daily portfolio summary and price/sentiment alerts derived
 from public market data. To receive these text messages, enter your mobile number
 and confirm your consent below.</p>
@@ -104,17 +104,17 @@ and confirm your consent below.</p>
     <input type="checkbox" id="consent" required>
     <label for="consent" style="font-weight:400;margin:0">
       I agree to receive automated SMS alerts from StockSight at the number above.
-      Consent is not a condition of any purchase. Up to 2 messages per business day.
+      Consent is not a condition of any purchase. Message frequency varies.
       Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. See our
       <a href="privacy.html">Privacy Policy</a> and <a href="terms.html">Terms of Service</a>.
     </label>
   </div>
   <button type="submit">Opt in to StockSight alerts</button>
-  <p id="ok" style="display:none;color:#1a9850">Thank you — your opt-in has been recorded.</p>
+  <p id="ok" style="display:none;color:#1a9850">Thank you. Your opt-in has been recorded.</p>
 </form>
 <p class="fine">By submitting, you confirm you are the subscriber or authorized user of
 the number provided and consent to receive recurring automated marketing/informational
-texts from StockSight. Frequency: up to 2 msgs/business day. Msg &amp; data rates may apply.
+texts from StockSight. Message frequency varies. Msg &amp; data rates may apply.
 Carriers are not liable for delayed or undelivered messages. Reply STOP to unsubscribe,
 HELP for help. Contact: drobinson18.dr9@gmail.com.</p>
 <p><a href="index.html">&larr; back to StockSight</a></p>
