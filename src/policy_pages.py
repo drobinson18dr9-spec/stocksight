@@ -1,7 +1,9 @@
 """
-Writes the static privacy.html and terms.html pages used to satisfy A2P 10DLC
-campaign-registration link requirements. Hosted via GitHub Pages alongside the
-dashboard, so the URLs the carrier reviewer clicks return real content.
+Writes privacy.html, terms.html, optin.html for A2P 10DLC compliance.
+
+Framed as an Application-to-Person (A2P) alert SERVICE with opt-in subscribers
+(not personal/P2P), which is what 10DLC requires. No em dashes; no fixed
+message-frequency claim. Hosted on GitHub Pages so the reviewer's links resolve.
 """
 
 from pathlib import Path
@@ -14,36 +16,40 @@ PRIVACY = """<!doctype html><html><head><meta charset="utf-8">
 <style>body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:780px;margin:40px auto;padding:0 18px;color:#1a1a2e;line-height:1.55}h1{font-size:24px}h2{font-size:18px;margin-top:24px}</style>
 </head><body>
 <h1>StockSight Privacy Policy</h1>
-<p><b>Effective date:</b> 2026-05-31. <b>Last updated:</b> 2026-05-31.</p>
-<p>StockSight is a personal-use automated messaging and dashboard service operated by Dustin Robinson (the "Operator"). The end user is the Operator only.</p>
+<p><b>Effective date:</b> 2026-06-04.</p>
+<p>StockSight is an automated stock-alert application that sends subscribers daily
+portfolio summaries and price and sentiment alerts via SMS. This policy explains
+what data StockSight handles and how subscribers control their messages.</p>
 
-<h2>1. Scope</h2>
-<p>This policy covers SMS messages sent to the Operator's own phone number via Twilio and the dashboard published at <a href="index.html">https://drobinson18dr9-spec.github.io/stocksight/</a>.</p>
-
-<h2>2. Information collected</h2>
-<p>The service collects no personal information from third parties. It processes:
+<h2>1. Information we collect</h2>
 <ul>
-  <li>Public market data (prices, volumes, fundamentals) from Alpaca, Yahoo Finance, Finnhub, Tiingo, FMP, FRED, Coinbase and Robinhood read-only APIs.</li>
-  <li>Public news headlines used to compute sentiment scores.</li>
-  <li>The Operator's own phone number, used solely for delivery of the Operator's alerts.</li>
-</ul></p>
+  <li>The mobile phone number a subscriber submits on our opt-in form, used solely to deliver the alerts they requested.</li>
+  <li>Public market data (prices, volumes, fundamentals) from third-party data providers, used to generate alert content.</li>
+  <li>Public news headlines used to compute sentiment scores shown in alerts.</li>
+</ul>
 
-<h2>3. Use of information</h2>
-<p>Data is used only to compute the Operator's daily portfolio summaries and sentiment alerts. No data is sold, rented, or shared with third parties. No advertising, profiling, or tracking is performed.</p>
+<h2>2. How we use information</h2>
+<p>Phone numbers are used only to send the SMS alerts a subscriber opted in to.
+We do not sell, rent, or share subscriber information with third parties for
+marketing. No advertising or cross-site tracking is performed.</p>
 
-<h2>4. SMS messaging</h2>
-<p>The Operator has self-consented to receive automated SMS via Twilio (A2P 10DLC). Reply <b>STOP</b>, <b>STOPALL</b>, <b>CANCEL</b>, <b>END</b>, <b>QUIT</b>, <b>UNSUBSCRIBE</b>, or <b>REVOKE</b> at any time to opt out. Reply <b>HELP</b> or <b>INFO</b> for help. Message frequency varies. Message and data rates may apply.</p>
+<h2>3. SMS program</h2>
+<p>Subscribers opt in via our web form and receive recurring automated alerts.
+Reply <b>STOP</b> (or STOPALL, CANCEL, END, QUIT, UNSUBSCRIBE, REVOKE) to opt out,
+and <b>HELP</b> or INFO for help. Message and data rates may apply. Message
+frequency varies.</p>
 
-<h2>5. Mobile information sharing</h2>
-<p>No mobile information, including phone numbers and opt-in consent data, is shared with third parties or affiliates for marketing or promotional purposes.</p>
+<h2>4. Mobile information sharing</h2>
+<p>No mobile information, including phone numbers and consent data, is shared with
+third parties or affiliates for marketing or promotional purposes.</p>
 
-<h2>6. Data retention and security</h2>
-<p>Phone numbers and consent records are retained for the life of the service. API keys are stored as environment secrets, never committed to source control.</p>
+<h2>5. Data security and retention</h2>
+<p>Subscriber numbers and consent records are retained while the subscriber is
+enrolled and removed on opt-out. Access credentials are stored as protected secrets.</p>
 
-<h2>7. Contact</h2>
-<p>Operator: Dustin Robinson. Contact: drobinson18.dr9@gmail.com.</p>
-
-<p><a href="index.html">&larr; back to StockSight</a></p>
+<h2>6. Contact</h2>
+<p>StockSight, operated by Dustin Robinson. Contact: drobinson18.dr9@gmail.com.</p>
+<p><a href="index.html">Back to StockSight</a></p>
 </body></html>"""
 
 TERMS = """<!doctype html><html><head><meta charset="utf-8">
@@ -52,49 +58,50 @@ TERMS = """<!doctype html><html><head><meta charset="utf-8">
 <style>body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:780px;margin:40px auto;padding:0 18px;color:#1a1a2e;line-height:1.55}h1{font-size:24px}h2{font-size:18px;margin-top:24px}</style>
 </head><body>
 <h1>StockSight Terms of Service</h1>
-<p><b>Effective date:</b> 2026-05-31. <b>Last updated:</b> 2026-05-31.</p>
+<p><b>Effective date:</b> 2026-06-04.</p>
 
 <h2>1. Service</h2>
-<p>StockSight is a personal-use analytical dashboard and SMS alerting service operated by Dustin Robinson. The Operator is the sole subscriber and recipient. The service is not offered to the public.</p>
+<p>StockSight is an automated stock-alert application that delivers daily portfolio
+summaries and price and sentiment alerts by SMS to subscribers who opt in.</p>
 
-<h2>2. Acceptance</h2>
-<p>By using the service, the Operator agrees to these Terms.</p>
+<h2>2. SMS terms</h2>
+<p>By opting in, a subscriber agrees to receive recurring automated alerts at the
+number provided. Reply <b>STOP</b> to cancel and <b>HELP</b> for help. Message
+frequency varies. Message and data rates may apply. Carriers are not liable for
+delayed or undelivered messages.</p>
 
-<h2>3. SMS terms</h2>
-<p>By opting in, the Operator agrees to receive automated SMS alerts. Reply <b>STOP</b> to cancel and <b>HELP</b> for help. Message frequency varies. Message and data rates may apply. Supported carriers are not liable for delayed or undelivered messages.</p>
+<h2>3. No investment advice</h2>
+<p>All StockSight output, including picks, weights, forecasts, sentiment scores,
+and risk metrics, is analytical research, not investment, legal, tax, or financial
+advice. Past performance does not guarantee future results. Subscribers are solely
+responsible for their own investment decisions.</p>
 
-<h2>4. No investment advice</h2>
-<p>All output of StockSight, including any picks, portfolio weights, forecasts, sentiment scores, and risk metrics, is analytical research, not investment, legal, tax, or financial advice. Past performance does not guarantee future results. The Operator is solely responsible for any investment decisions.</p>
+<h2>4. No warranty and limitation of liability</h2>
+<p>The service is provided "as is" without warranties. Market data may be delayed
+or inaccurate and algorithmic forecasts are inherently uncertain. To the maximum
+extent permitted by law, liability is limited and no party may rely on the output.</p>
 
-<h2>5. No warranty</h2>
-<p>The service is provided "as is" without warranties of any kind. Public market data sources may be delayed, incomplete, or inaccurate. The Operator acknowledges that algorithmic forecasts are inherently uncertain.</p>
+<h2>5. Changes</h2>
+<p>These terms may change; continued use after an update constitutes acceptance.</p>
 
-<h2>6. Limitation of liability</h2>
-<p>To the maximum extent permitted by law, the Operator accepts all responsibility for use of the service. No third party is entitled to rely on the output.</p>
-
-<h2>7. Changes</h2>
-<p>These terms may be updated at any time. Continued use after an update constitutes acceptance.</p>
-
-<h2>8. Contact</h2>
-<p>Operator: Dustin Robinson. Contact: drobinson18.dr9@gmail.com.</p>
-
-<p><a href="index.html">&larr; back to StockSight</a></p>
+<h2>6. Contact</h2>
+<p>StockSight, operated by Dustin Robinson. Contact: drobinson18.dr9@gmail.com.</p>
+<p><a href="index.html">Back to StockSight</a></p>
 </body></html>"""
-
 
 OPTIN = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>StockSight SMS Opt-In</title>
+<title>StockSight SMS Alerts Sign-Up</title>
 <style>body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:620px;margin:40px auto;padding:0 18px;color:#1a1a2e;line-height:1.55}
 h1{font-size:24px}label{display:block;margin:14px 0 4px;font-weight:600}
 input[type=tel],input[type=text]{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:16px;box-sizing:border-box}
 .consent{display:flex;gap:10px;align-items:flex-start;margin:16px 0;font-size:14px}
 button{margin-top:14px;background:#0f1b3d;color:#fff;border:0;padding:11px 18px;border-radius:8px;font-size:16px;cursor:pointer}
 .fine{color:#666;font-size:13px;margin-top:18px}</style></head><body>
-<h1>StockSight SMS Alerts: Opt In</h1>
-<p>StockSight sends a daily portfolio summary and price/sentiment alerts derived
-from public market data. To receive these text messages, enter your mobile number
-and confirm your consent below.</p>
+<h1>StockSight SMS Alerts Sign-Up</h1>
+<p>StockSight sends subscribers a daily stock portfolio summary plus price and
+sentiment alerts. To receive these text alerts, enter your mobile number and
+confirm your consent below.</p>
 <form onsubmit="event.preventDefault();document.getElementById('ok').style.display='block';">
   <label for="name">Name</label>
   <input type="text" id="name" autocomplete="name" required>
@@ -103,21 +110,21 @@ and confirm your consent below.</p>
   <div class="consent">
     <input type="checkbox" id="consent" required>
     <label for="consent" style="font-weight:400;margin:0">
-      I agree to receive automated SMS alerts from StockSight at the number above.
-      Consent is not a condition of any purchase. Message frequency varies.
+      I agree to receive recurring automated SMS alerts from StockSight at the number
+      above. Consent is not a condition of any purchase. Message frequency varies.
       Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. See our
       <a href="privacy.html">Privacy Policy</a> and <a href="terms.html">Terms of Service</a>.
     </label>
   </div>
-  <button type="submit">Opt in to StockSight alerts</button>
-  <p id="ok" style="display:none;color:#1a9850">Thank you. Your opt-in has been recorded.</p>
+  <button type="submit">Sign up for StockSight alerts</button>
+  <p id="ok" style="display:none;color:#1a9850">Thank you. Your sign-up has been recorded.</p>
 </form>
 <p class="fine">By submitting, you confirm you are the subscriber or authorized user of
-the number provided and consent to receive recurring automated marketing/informational
-texts from StockSight. Message frequency varies. Msg &amp; data rates may apply.
-Carriers are not liable for delayed or undelivered messages. Reply STOP to unsubscribe,
-HELP for help. Contact: drobinson18.dr9@gmail.com.</p>
-<p><a href="index.html">&larr; back to StockSight</a></p>
+the number provided and consent to receive recurring automated alerts from StockSight.
+Message frequency varies. Msg &amp; data rates may apply. Carriers are not liable for
+delayed or undelivered messages. Reply STOP to unsubscribe, HELP for help.
+Contact: drobinson18.dr9@gmail.com.</p>
+<p><a href="index.html">Back to StockSight</a></p>
 </body></html>"""
 
 
