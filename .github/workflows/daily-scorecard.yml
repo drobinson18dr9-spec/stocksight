@@ -4,10 +4,10 @@ name: Daily Scorecard
 # 13:00 UTC = 09:00 ET (after prior US close). Adjust as you like.
 on:
   schedule:
-    # Weekly: the core signals are 252-day trailing (half-life ~6 months), so a
-    # daily run changes the window by 0.4% and picks barely move. Weekly matches
-    # the signal's natural turnover. Mondays 15:00 UTC = 08:00 PDT.
-    - cron: "0 15 * * 1"
+    # Daily (Mon-Fri 15:00 UTC = 08:00 PDT). The 252-day core picks are stable
+    # day to day by design, but the alert also carries fast 1mo/3mo momentum and
+    # daily news-sentiment scores that DO move, so the daily summary stays useful.
+    - cron: "0 15 * * 1-5"
   workflow_dispatch: {}        # run manually anytime from the Actions tab
 
 permissions:
