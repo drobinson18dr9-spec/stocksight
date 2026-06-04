@@ -4,11 +4,16 @@ name: Daily Scorecard
 # 13:00 UTC = 09:00 ET (after prior US close). Adjust as you like.
 on:
   schedule:
-    # Daily (Mon-Fri 15:00 UTC = 08:00 PDT). The 252-day core picks are stable
-    # day to day by design, but the alert also carries fast 1mo/3mo momentum and
-    # daily news-sentiment scores that DO move, so the daily summary stays useful.
-    - cron: "0 15 * * 1-5"
-  workflow_dispatch: {}        # run manually anytime from the Actions tab
+    # Three cadences, each posts its own labeled Slack summary (unique minutes so
+    # github.event.schedule maps cleanly to a label). 15:00 UTC = 08:00 PDT.
+    - cron: "0 15 * * 1-5"     # Daily  (Mon-Fri): fast 1mo/3mo momentum + news
+    - cron: "30 15 * * 1"      # Weekly (Mon): portfolio rebalance view
+    - cron: "0 16 1 * *"       # Monthly (1st): longer-horizon review
+  workflow_dispatch:
+    inputs:
+      cadence:
+        description: "Cadence label (Daily / Weekly / Monthly)"
+        default: "Daily"
 
 permissions:
   contents: read
@@ -34,6 +39,18 @@ jobs:
       - name: Verify math (formula test suite, fails the run on any mismatch)
         run: python src/verify.py
 
+      - name: Determine cadence from the schedule that fired
+        id: cad
+        run: |
+          case "${{ github.event.schedule }}" in
+            "30 15 * * 1") C=Weekly ;;
+            "0 16 1 * *")  C=Monthly ;;
+            "0 15 * * 1-5") C=Daily ;;
+            *) C="${{ github.event.inputs.cadence || 'Daily' }}" ;;
+          esac
+          echo "cadence=$C" >> "$GITHUB_OUTPUT"
+          echo "Cadence: $C"
+
       - name: Run scorecard and send alert text
         env:
           DISABLE_TWILIO: "1"   # Slack-only until A2P clears (no SMS burn). Remove to re-enable Twilio.
@@ -49,7 +66,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: python src/scorecard.py --multi --top 12 --max-weight 0.25
+        run: python src/scorecard.py --multi --top 12 --max-weight 0.25 --cadence "${{ steps.cad.outputs.cadence }}"
 
       - name: Build interactive dashboard
         env:

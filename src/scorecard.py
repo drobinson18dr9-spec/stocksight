@@ -726,9 +726,11 @@ STRATEGIES = [
 
 
 def run_multi(top_n: int = 12, max_weight: float = 0.25,
-              universe_limit: int | None = None, lookback_days: int = 420) -> list:
+              universe_limit: int | None = None, lookback_days: int = 420,
+              cadence: str = "Daily") -> list:
     """Run several price-band strategies off one data pull. Core also drives the
-    saved report/dashboard. Returns [(label, summary_text), ...]."""
+    saved report/dashboard. `cadence` (Daily/Weekly/Monthly) labels each summary.
+    Returns [(label, summary_text), ...]."""
     set_live_risk_free()
     asof = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     bars = get_bars(universe_limit=universe_limit, lookback_days=lookback_days)
@@ -741,7 +743,7 @@ def run_multi(top_n: int = 12, max_weight: float = 0.25,
         portfolio = build_portfolio(scored, bars, top_n=top_n, max_weight=max_weight)
         if i == 0:                       # Core feeds the saved report/dashboard
             write_reports(scored, portfolio, asof)
-        msg = build_sms(scored, portfolio, asof, title=label_)
+        msg = build_sms(scored, portfolio, asof, title=f"{cadence} {label_}")
         out.append((label_, msg))
         print("\n" + "=" * 60 + "\n" + msg + "\n" + "=" * 60)
     return out
@@ -755,12 +757,14 @@ def main():
                     help="cap universe size (for fast test runs)")
     ap.add_argument("--lookback-days", type=int, default=420)
     ap.add_argument("--multi", action="store_true", help="run all STRATEGIES and post each")
+    ap.add_argument("--cadence", default="Daily", help="label: Daily / Weekly / Monthly")
     ap.add_argument("--no-notify", action="store_true", help="skip sending the text")
     args = ap.parse_args()
 
     if args.multi:
         results = run_multi(top_n=args.top, max_weight=args.max_weight,
-                            universe_limit=args.universe_limit, lookback_days=args.lookback_days)
+                            universe_limit=args.universe_limit, lookback_days=args.lookback_days,
+                            cadence=args.cadence)
         if not args.no_notify:
             try:
                 import notify
