@@ -35,9 +35,10 @@ marketing. No advertising or cross-site tracking is performed.</p>
 
 <h2>3. SMS program</h2>
 <p>Subscribers opt in via our web form and receive recurring automated alerts.
-Reply <b>STOP</b> (or STOPALL, CANCEL, END, QUIT, UNSUBSCRIBE, REVOKE) to opt out,
-and <b>HELP</b> or INFO for help. Message and data rates may apply. Message
-frequency varies.</p>
+SMS consent is optional and is not required to use StockSight or to complete any
+service or transaction. Reply <b>STOP</b> (or STOPALL, CANCEL, END, QUIT, UNSUBSCRIBE,
+REVOKE) to opt out, and <b>HELP</b> or INFO for help. Message and data rates may
+apply. Message frequency varies.</p>
 
 <h2>4. Mobile information sharing</h2>
 <p>No mobile information, including phone numbers and consent data, is shared with
@@ -66,9 +67,10 @@ summaries and price and sentiment alerts by SMS to subscribers who opt in.</p>
 
 <h2>2. SMS terms</h2>
 <p>By opting in, a subscriber agrees to receive recurring automated alerts at the
-number provided. Reply <b>STOP</b> to cancel and <b>HELP</b> for help. Message
-frequency varies. Message and data rates may apply. Carriers are not liable for
-delayed or undelivered messages.</p>
+number provided. SMS consent is optional and is not required to use StockSight or to
+complete any service or transaction. Reply <b>STOP</b> to cancel and <b>HELP</b> for
+help. Message frequency varies. Message and data rates may apply. Carriers are not
+liable for delayed or undelivered messages.</p>
 
 <h2>3. No investment advice</h2>
 <p>All StockSight output, including picks, weights, forecasts, sentiment scores,
@@ -100,19 +102,22 @@ button{margin-top:14px;background:#0f1b3d;color:#fff;border:0;padding:11px 18px;
 .fine{color:#666;font-size:13px;margin-top:18px}</style></head><body>
 <h1>StockSight SMS Alerts Sign-Up</h1>
 <p>StockSight sends subscribers a daily stock portfolio summary plus price and
-sentiment alerts. To receive these text alerts, enter your mobile number and
-confirm your consent below.</p>
+sentiment alerts. SMS alerts are an optional add-on. You can use the StockSight
+dashboard without signing up for texts, and SMS consent is never required to use
+StockSight or to complete any service. To opt in to texts, enter your mobile number
+and check the optional consent box below.</p>
 <form onsubmit="event.preventDefault();document.getElementById('ok').style.display='block';">
   <label for="name">Name</label>
-  <input type="text" id="name" autocomplete="name" required>
+  <input type="text" id="name" autocomplete="name">
   <label for="phone">Mobile number</label>
-  <input type="tel" id="phone" placeholder="+1 555 123 4567" autocomplete="tel" required>
+  <input type="tel" id="phone" placeholder="+1 555 123 4567" autocomplete="tel">
   <div class="consent">
-    <input type="checkbox" id="consent" required>
+    <input type="checkbox" id="consent">
     <label for="consent" style="font-weight:400;margin:0">
-      I agree to receive recurring automated SMS alerts from StockSight at the number
-      above. Consent is not a condition of any purchase. Message frequency varies.
-      Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. See our
+      (Optional) I agree to receive recurring automated SMS alerts from StockSight at
+      the number above. SMS consent is optional and is NOT required to use StockSight or
+      to complete any service or transaction. Message frequency varies. Message &amp; data
+      rates may apply. Reply STOP to cancel, HELP for help. See our
       <a href="privacy.html">Privacy Policy</a> and <a href="terms.html">Terms of Service</a>.
     </label>
   </div>
