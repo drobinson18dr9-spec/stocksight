@@ -768,13 +768,10 @@ def main():
         if not args.no_notify:
             try:
                 import notify
-                # Core via the full chain (Twilio primary, Slack fallback);
-                # the rest straight to Slack so every strategy is visible.
-                for i, (_, msg) in enumerate(results):
-                    if i == 0:
-                        notify.send(msg)
-                    else:
-                        notify._slack(msg)
+                # Every strategy goes through the full chain: Twilio primary,
+                # Slack only as a fallback if Twilio fails (no redundant Slack).
+                for _, msg in results:
+                    notify.send(msg)
             except Exception as e:
                 print(f"Notify skipped/failed: {e}")
         return
