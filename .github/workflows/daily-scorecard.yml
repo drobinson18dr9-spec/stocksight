@@ -53,7 +53,7 @@ jobs:
 
       - name: Run scorecard and send alert text
         env:
-          DISABLE_TWILIO: "1"   # Slack-only until A2P clears (no SMS burn). Remove to re-enable Twilio.
+          # A2P approved 2026-06: Twilio is primary (delivers SMS), Slack is the fallback.
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
           TWILIO_SID: ${{ secrets.TWILIO_SID }}

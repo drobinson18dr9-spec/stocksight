@@ -87,13 +87,12 @@ Free, no-key: Yahoo (yfinance/RSS), SEC EDGAR, GDELT, FRED CSV, Seeking Alpha RS
 
 ## Alerting status
 
-- Slack is the WORKING channel (free, push to phone). Channel #stocksight.
-- Twilio SMS is blocked by A2P 10DLC. History: rejected for CTA, then for P2P.
-  Root cause: describing it as "personal/sole recipient" reads as person-to-person.
-  Fix in progress: reframe as an A2P notification APP with opt-in subscribers
-  (privacy/terms/optin pages updated; campaign description must drop personal
-  language; use case "Low Volume Mixed"; declare stock + task/webhook message types).
-  If it rejects again, stop and rely on Slack/Telegram.
+- Twilio SMS: A2P 10DLC APPROVED and ACTIVE (2026-06). Twilio is PRIMARY (delivers,
+  verified status=delivered), Slack is the automatic fallback. DISABLE_TWILIO env
+  has been removed from the workflow. (History, for context: it took several
+  rejections, CTA, then P2P, then consent-as-condition; fixed by reframing as an
+  A2P stock-alert app with an OPTIONAL opt-in on optin.html.)
+- Slack still configured as fallback (#stocksight) and fires if Twilio ever fails.
 
 ## What was researched + audited (multi-agent)
 
