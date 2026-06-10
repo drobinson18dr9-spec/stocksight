@@ -193,20 +193,20 @@ def quick_summary() -> str:
 
 
 def launch_app() -> str:
-    """Open the Claude desktop app on this machine (CLAUDE_APP_PATH overrides)."""
+    """Open the NATIVE Claude desktop app (the GUI with Cowork), not the CLI.
+    On Windows the app is a Store/MSIX package launched via its AppUserModelID
+    (CLAUDE_APP_AUMID overrides). On macOS, `open -a Claude`."""
     try:
-        p = _os.environ.get("CLAUDE_APP_PATH")
         if _IS_WINDOWS:
+            p = _os.environ.get("CLAUDE_APP_PATH")
             if p and Path(p).exists():
                 subprocess.Popen([p])
-            else:  # default install location, then a best-effort start
-                default = Path(_os.environ.get("LOCALAPPDATA", "")) / "AnthropicClaude" / "claude.exe"
-                if default.exists():
-                    subprocess.Popen([str(default)])
-                else:
-                    subprocess.Popen('cmd /c start "" "Claude"', shell=True)
+            else:
+                aumid = _os.environ.get("CLAUDE_APP_AUMID", "Claude_pzs8sxrjxfjjc!Claude")
+                # explorer resolves shell:AppsFolder\<AUMID> for Store apps.
+                subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{aumid}"])
         else:  # macOS
-            subprocess.Popen(["open", "-a", p or "Claude"])
+            subprocess.Popen(["open", "-a", _os.environ.get("CLAUDE_APP_PATH", "Claude")])
         return "Opening the Claude desktop app on " + THIS_PLATFORM + "."
     except Exception as e:
         return f"Could not open Claude app: {e}"
