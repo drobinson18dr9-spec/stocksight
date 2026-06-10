@@ -15,8 +15,13 @@ How it works (poll-based, so no public webhook/server is needed):
      restarts do not re-answer old texts.
 
 Commands you can text:
-  "summary"            -> quick scorecard summary (cached data, fast)
-  anything else        -> answered by Claude with repo context
+  "summary"                  -> quick scorecard summary (cached, fast)
+  "question..."              -> Claude answers from the stocksight repo
+  "@home question..."        -> Claude runs in your user profile (allowlist:
+                                @stocksight @home @downloads @claude)
+  "!do task..."              -> ACTION mode: file edits allowed (acceptEdits).
+                                Combine: "@claude !do rename X to Y"
+  Default is answer-only: no edits or state changes without "!do".
 
 Safety: replies only to SMS_TO (your number). STOP/HELP are handled by
 Twilio/A2P itself and are ignored here.
@@ -92,21 +97,50 @@ def send_sms(sid, tok, frm, to, body):
     return r.json().get("sid")
 
 
-def ask_claude(question: str) -> str:
-    """Headless Claude Code run inside the stocksight repo. Claude gets the
-    repo context (SESSION_HANDOFF.md etc.) and a tight SMS-answer brief."""
+# Workspace routing: text "@name question" to point Claude somewhere else.
+# Only these allowlisted roots are reachable; everything else is refused.
+WORKSPACES = {
+    "stocksight": ROOT,                                  # default
+    "home": Path.home(),                                 # whole user profile (read)
+    "downloads": Path.home() / "Downloads",
+    "claude": Path.home() / "Claude",                    # the workspace folder
+}
+
+
+def parse_routing(body: str):
+    """'@home !do clean up X' -> (workspace_path, action_mode, question)."""
+    ws, action = WORKSPACES["stocksight"], False
+    parts = body.strip().split()
+    while parts:
+        head = parts[0].lower()
+        if head.startswith("@") and head[1:] in WORKSPACES:
+            ws = WORKSPACES[head[1:]]; parts = parts[1:]
+        elif head == "!do":
+            action = True; parts = parts[1:]
+        else:
+            break
+    return ws, action, " ".join(parts)
+
+
+def ask_claude(question: str, cwd: Path = ROOT, action: bool = False) -> str:
+    """Headless Claude Code run in an allowlisted workspace.
+    Default is ANSWER mode: Claude can read/search but permission-gated tools
+    (edits, most commands) are blocked in headless mode, so a text cannot
+    silently change your machine. Prefix '!do' for ACTION mode, which allows
+    file edits (acceptEdits). Full bypass is deliberately NOT offered here."""
     prompt = (
-        "You are answering a text message (SMS) from the StockSight owner. "
-        "Repo context is available; SESSION_HANDOFF.md describes the project. "
+        "You are answering a text message (SMS) from the machine owner. "
+        f"Working directory: {cwd}. "
         "Be direct and compact: the ENTIRE answer must fit in under 900 characters "
-        "of plain text. No markdown, no headers, no em dashes. If asked for picks "
-        "or a summary, read the latest files in reports/ rather than recomputing. "
+        "of plain text. No markdown, no headers, no em dashes. "
         f"Owner's text: {question}"
     )
+    cmd = ["claude", "-p", prompt, "--max-turns", "8"]
+    if action:
+        cmd += ["--permission-mode", "acceptEdits"]
     try:
         res = subprocess.run(
-            ["claude", "-p", prompt, "--max-turns", "8"],
-            cwd=str(ROOT), capture_output=True, text=True,
+            cmd, cwd=str(cwd), capture_output=True, text=True,
             timeout=CLAUDE_TIMEOUT, shell=True,
         )
         ans = (res.stdout or "").strip() or (res.stderr or "").strip()
@@ -153,8 +187,12 @@ def main(once=False):
                                     "START", "YES"):
                     continue                      # carrier keywords, leave alone
                 print(f"[{datetime.now():%H:%M:%S}] inbound: {body[:80]}")
-                reply = quick_summary() if body.lower().strip() in ("summary", "stocks", "picks") \
-                    else ask_claude(body)
+                if body.lower().strip() in ("summary", "stocks", "picks"):
+                    reply = quick_summary()
+                else:
+                    ws, action, q = parse_routing(body)
+                    reply = ask_claude(q, cwd=ws, action=action) if q else \
+                        "Empty question. Try: @home what big files are in Downloads"
                 send_sms(sid, tok, frm, me, reply)
                 print(f"  replied ({len(reply)} chars)")
         except Exception as e:
