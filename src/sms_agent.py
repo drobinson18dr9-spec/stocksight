@@ -17,10 +17,10 @@ How it works (poll-based, so no public webhook/server is needed):
 Commands you can text:
   "summary"                  -> quick scorecard summary (cached, fast)
   "question..."              -> Claude answers from the stocksight repo
-  "@home question..."        -> Claude runs in your user profile (allowlist:
-                                @stocksight @home @downloads @claude, plus
-                                @windows or @mac for the local machine; the
-                                OTHER platform only if CROSS_HOME points at it)
+  "@windows question..."     -> Claude runs in this machine's user profile
+                                (on the Mac daemon, use @mac). Allowlist:
+                                @stocksight @downloads @claude @windows/@mac;
+                                the OTHER platform only via CROSS_HOME mount.
   "!do task..."              -> ACTION mode: file edits allowed (acceptEdits).
                                 Combine: "@claude !do rename X to Y"
   Default is answer-only: no edits or state changes without "!do".
@@ -114,10 +114,9 @@ _LOCAL_HOME = Path.home()
 _CROSS_HOME = _os.environ.get("CROSS_HOME")              # e.g. a synced/SMB path
 WORKSPACES = {
     "stocksight": ROOT,                                  # default
-    "home": _LOCAL_HOME,                                 # this machine's home
     "downloads": _LOCAL_HOME / "Downloads",
     "claude": _LOCAL_HOME / "Claude",
-    THIS_PLATFORM: _LOCAL_HOME,                           # @windows or @mac = local
+    THIS_PLATFORM: _LOCAL_HOME,                           # @windows or @mac = this home
 }
 _other = "mac" if _IS_WINDOWS else "windows"
 if _CROSS_HOME and Path(_CROSS_HOME).exists():
@@ -125,7 +124,7 @@ if _CROSS_HOME and Path(_CROSS_HOME).exists():
 
 
 def parse_routing(body: str):
-    """'@home !do clean up X' -> (workspace_path, action_mode, question, error)."""
+    """'@windows !do clean up X' -> (workspace_path, action_mode, question, error)."""
     ws, action, err = WORKSPACES["stocksight"], False, None
     parts = body.strip().split()
     while parts:
@@ -139,7 +138,7 @@ def parse_routing(body: str):
                        f"this {THIS_PLATFORM} box (set CROSS_HOME to a mounted path).")
                 parts = parts[1:]
             else:
-                err = f"Unknown workspace @{name}. Use @stocksight @home @downloads @claude @{THIS_PLATFORM}."
+                err = f"Unknown workspace @{name}. Use @stocksight @downloads @claude @{THIS_PLATFORM}."
                 parts = parts[1:]
         elif head == "!do":
             action = True; parts = parts[1:]
@@ -222,7 +221,7 @@ def main(once=False):
                     if err:
                         reply = err
                     elif not q:
-                        reply = "Empty question. Try: @home what big files are in Downloads"
+                        reply = "Empty question. Try: @windows what big files are in Downloads"
                     else:
                         reply = ask_claude(q, cwd=ws, action=action)
                 send_sms(sid, tok, frm, me, reply)
