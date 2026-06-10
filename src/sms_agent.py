@@ -192,6 +192,81 @@ def quick_summary() -> str:
         return f"Summary unavailable: {e}"
 
 
+def launch_app() -> str:
+    """Open the Claude desktop app on this machine (CLAUDE_APP_PATH overrides)."""
+    try:
+        p = _os.environ.get("CLAUDE_APP_PATH")
+        if _IS_WINDOWS:
+            if p and Path(p).exists():
+                subprocess.Popen([p])
+            else:  # default install location, then a best-effort start
+                default = Path(_os.environ.get("LOCALAPPDATA", "")) / "AnthropicClaude" / "claude.exe"
+                if default.exists():
+                    subprocess.Popen([str(default)])
+                else:
+                    subprocess.Popen('cmd /c start "" "Claude"', shell=True)
+        else:  # macOS
+            subprocess.Popen(["open", "-a", p or "Claude"])
+        return "Opening the Claude desktop app on " + THIS_PLATFORM + "."
+    except Exception as e:
+        return f"Could not open Claude app: {e}"
+
+
+def handle_text(body: str) -> str:
+    """Turn one inbound SMS body into a reply (shared by poll + webhook)."""
+    body = (body or "").strip()
+    if body.upper() in ("STOP", "STOPALL", "CANCEL", "END", "QUIT",
+                        "UNSUBSCRIBE", "REVOKE", "HELP", "INFO", "START", "YES"):
+        return ""                                  # carrier keywords, no reply
+    low = body.lower().strip()
+    if low in ("summary", "stocks", "picks"):
+        return quick_summary()
+    if low in ("!open", "open claude", "!open claude"):
+        return launch_app()
+    ws, action, q, err = parse_routing(body)
+    if err:
+        return err
+    if not q:
+        return "Empty question. Try: @windows what big files are in Downloads"
+    return ask_claude(q, cwd=ws, action=action)
+
+
+def serve_webhook(port=8787):
+    """Run a tiny HTTP listener for Twilio inbound webhooks. Point a tunnel
+    (Cloudflare Tunnel / ngrok) at http://localhost:PORT/sms and set that public
+    URL as the number's 'A MESSAGE COMES IN' webhook in the Twilio console.
+    No polling; Twilio pushes each text here."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs
+    sid, tok, frm, me = _env()
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):  # quiet default logging
+            pass
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            data = parse_qs(self.rfile.read(n).decode("utf-8", "ignore"))
+            sender = (data.get("From") or [""])[0]
+            body = (data.get("Body") or [""])[0]
+            print(f"[{datetime.now():%H:%M:%S}] webhook from {sender}: {body[:80]}")
+            reply = handle_text(body) if sender == me else ""
+            # TwiML response: Twilio sends `reply` back to the user automatically
+            twiml = f"<?xml version='1.0' encoding='UTF-8'?><Response>{('<Message>'+_esc(reply)+'</Message>') if reply else ''}</Response>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/xml")
+            self.end_headers()
+            self.wfile.write(twiml.encode("utf-8"))
+
+    print(f"Webhook listener on http://localhost:{port}/  (POST). Point a tunnel here.")
+    print(f"Platform {THIS_PLATFORM}. Workspaces: {', '.join('@'+k for k in WORKSPACES)}")
+    HTTPServer(("0.0.0.0", port), H).serve_forever()
+
+
+def _esc(s):
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))[:SMS_LIMIT]
+
+
 def main(once=False):
     sid, tok, frm, me = _env()
     seen = _seen()
@@ -205,27 +280,13 @@ def main(once=False):
                 if msid in seen:
                     continue
                 seen.add(msid); _save_seen(seen)
-                body = (m.get("body") or "").strip()
-                sender = m.get("from")
-                if sender != me or not body:
+                if (m.get("from") or "") != me:
                     continue
-                if body.upper() in ("STOP", "STOPALL", "CANCEL", "END", "QUIT",
-                                    "UNSUBSCRIBE", "REVOKE", "HELP", "INFO",
-                                    "START", "YES"):
-                    continue                      # carrier keywords, leave alone
-                print(f"[{datetime.now():%H:%M:%S}] inbound: {body[:80]}")
-                if body.lower().strip() in ("summary", "stocks", "picks"):
-                    reply = quick_summary()
-                else:
-                    ws, action, q, err = parse_routing(body)
-                    if err:
-                        reply = err
-                    elif not q:
-                        reply = "Empty question. Try: @windows what big files are in Downloads"
-                    else:
-                        reply = ask_claude(q, cwd=ws, action=action)
-                send_sms(sid, tok, frm, me, reply)
-                print(f"  replied ({len(reply)} chars)")
+                print(f"[{datetime.now():%H:%M:%S}] inbound: {(m.get('body') or '')[:80]}")
+                reply = handle_text(m.get("body") or "")
+                if reply:
+                    send_sms(sid, tok, frm, me, reply)
+                    print(f"  replied ({len(reply)} chars)")
         except Exception as e:
             print(f"poll error: {e}")
         if once:
@@ -236,5 +297,10 @@ def main(once=False):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
+    ap.add_argument("--webhook", action="store_true", help="run webhook listener instead of polling")
+    ap.add_argument("--port", type=int, default=8787)
     args = ap.parse_args()
-    main(once=args.once)
+    if args.webhook:
+        serve_webhook(args.port)
+    else:
+        main(once=args.once)
