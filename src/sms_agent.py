@@ -18,7 +18,9 @@ Commands you can text:
   "summary"                  -> quick scorecard summary (cached, fast)
   "question..."              -> Claude answers from the stocksight repo
   "@home question..."        -> Claude runs in your user profile (allowlist:
-                                @stocksight @home @downloads @claude)
+                                @stocksight @home @downloads @claude, plus
+                                @windows or @mac for the local machine; the
+                                OTHER platform only if CROSS_HOME points at it)
   "!do task..."              -> ACTION mode: file edits allowed (acceptEdits).
                                 Combine: "@claude !do rename X to Y"
   Default is answer-only: no edits or state changes without "!do".
@@ -99,27 +101,51 @@ def send_sms(sid, tok, frm, to, body):
 
 # Workspace routing: text "@name question" to point Claude somewhere else.
 # Only these allowlisted roots are reachable; everything else is refused.
+import os as _os
+import platform as _plat
+
+_IS_WINDOWS = _os.name == "nt"
+THIS_PLATFORM = "windows" if _IS_WINDOWS else "mac"
+
+# Cross-platform homes. The machine the daemon runs on maps its own platform
+# label to the real local home. The OTHER platform is reachable only if you
+# point CROSS_HOME at a mounted/synced path (env), else it is refused, not guessed.
+_LOCAL_HOME = Path.home()
+_CROSS_HOME = _os.environ.get("CROSS_HOME")              # e.g. a synced/SMB path
 WORKSPACES = {
     "stocksight": ROOT,                                  # default
-    "home": Path.home(),                                 # whole user profile (read)
-    "downloads": Path.home() / "Downloads",
-    "claude": Path.home() / "Claude",                    # the workspace folder
+    "home": _LOCAL_HOME,                                 # this machine's home
+    "downloads": _LOCAL_HOME / "Downloads",
+    "claude": _LOCAL_HOME / "Claude",
+    THIS_PLATFORM: _LOCAL_HOME,                           # @windows or @mac = local
 }
+_other = "mac" if _IS_WINDOWS else "windows"
+if _CROSS_HOME and Path(_CROSS_HOME).exists():
+    WORKSPACES[_other] = Path(_CROSS_HOME)               # the other box, if mounted
 
 
 def parse_routing(body: str):
-    """'@home !do clean up X' -> (workspace_path, action_mode, question)."""
-    ws, action = WORKSPACES["stocksight"], False
+    """'@home !do clean up X' -> (workspace_path, action_mode, question, error)."""
+    ws, action, err = WORKSPACES["stocksight"], False, None
     parts = body.strip().split()
     while parts:
         head = parts[0].lower()
-        if head.startswith("@") and head[1:] in WORKSPACES:
-            ws = WORKSPACES[head[1:]]; parts = parts[1:]
+        if head.startswith("@"):
+            name = head[1:]
+            if name in WORKSPACES:
+                ws = WORKSPACES[name]; parts = parts[1:]
+            elif name in ("windows", "mac"):
+                err = (f"@{name} is the other machine and is not reachable from "
+                       f"this {THIS_PLATFORM} box (set CROSS_HOME to a mounted path).")
+                parts = parts[1:]
+            else:
+                err = f"Unknown workspace @{name}. Use @stocksight @home @downloads @claude @{THIS_PLATFORM}."
+                parts = parts[1:]
         elif head == "!do":
             action = True; parts = parts[1:]
         else:
             break
-    return ws, action, " ".join(parts)
+    return ws, action, " ".join(parts), err
 
 
 def ask_claude(question: str, cwd: Path = ROOT, action: bool = False) -> str:
@@ -170,7 +196,9 @@ def quick_summary() -> str:
 def main(once=False):
     sid, tok, frm, me = _env()
     seen = _seen()
-    print(f"SMS agent up. Polling {frm} every {POLL_SECONDS}s. Ctrl+C to stop.")
+    print(f"SMS agent up on {THIS_PLATFORM.upper()}. Polling {frm} every {POLL_SECONDS}s.")
+    print(f"Workspaces: {', '.join('@'+k for k in WORKSPACES)}  (default @stocksight)")
+    print("Ctrl+C to stop.")
     while True:
         try:
             for m in fetch_inbound(sid, tok, frm):
@@ -190,9 +218,13 @@ def main(once=False):
                 if body.lower().strip() in ("summary", "stocks", "picks"):
                     reply = quick_summary()
                 else:
-                    ws, action, q = parse_routing(body)
-                    reply = ask_claude(q, cwd=ws, action=action) if q else \
-                        "Empty question. Try: @home what big files are in Downloads"
+                    ws, action, q, err = parse_routing(body)
+                    if err:
+                        reply = err
+                    elif not q:
+                        reply = "Empty question. Try: @home what big files are in Downloads"
+                    else:
+                        reply = ask_claude(q, cwd=ws, action=action)
                 send_sms(sid, tok, frm, me, reply)
                 print(f"  replied ({len(reply)} chars)")
         except Exception as e:
