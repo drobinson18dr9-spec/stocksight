@@ -49,7 +49,11 @@ jobs:
             *) C="${{ github.event.inputs.cadence || 'Daily' }}" ;;
           esac
           echo "cadence=$C" >> "$GITHUB_OUTPUT"
-          echo "Cadence: $C"
+          # Texts go out ONLY on the Weekly run. Daily/Monthly runs still compute
+          # the math, refresh reports, and redeploy the dashboard, silently.
+          if [ "$C" = "Weekly" ]; then NOTIFY=""; else NOTIFY="--no-notify"; fi
+          echo "notify_flag=$NOTIFY" >> "$GITHUB_OUTPUT"
+          echo "Cadence: $C (notify: ${NOTIFY:-on})"
 
       - name: Run scorecard and send alert text
         env:
@@ -66,7 +70,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: python src/scorecard.py --multi --top 12 --max-weight 0.25 --cadence "${{ steps.cad.outputs.cadence }}"
+        run: python src/scorecard.py --multi --top 12 --max-weight 0.25 --cadence "${{ steps.cad.outputs.cadence }}" ${{ steps.cad.outputs.notify_flag }}
 
       - name: Build interactive dashboard
         env:
