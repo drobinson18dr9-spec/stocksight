@@ -332,10 +332,14 @@ def build_forecasts():
 
 <script>
  var PRE = {pre_js};
- var LAYOUT = {{template:'plotly_white',autosize:true,margin:{{t:46,l:44,r:8,b:34}},
-   legend:{{orientation:'h',y:-0.2,x:0,font:{{size:10}}}},yaxis:{{title:'Price ($)',automargin:true}},
-   xaxis:{{automargin:true}}}};
+ var SMALL = window.matchMedia('(max-width:600px)').matches;
+ var LAYOUT = {{template:'plotly_white',autosize:true,
+   margin: SMALL ? {{t:60,l:40,r:10,b:30}} : {{t:46,l:44,r:8,b:34}},
+   legend:{{orientation:'h',y:-0.2,x:0,font:{{size: SMALL?9:10}}}},
+   yaxis:{{title:'Price ($)',automargin:true}},xaxis:{{automargin:true}}}};
  var CFG = {{responsive:true,displaylogo:false,
+   // On phones the modebar overlaps the title, so hide it there.
+   displayModeBar: !SMALL,
    modeBarButtonsToRemove:['lasso2d','select2d','autoScale2d','toggleSpikelines'],
    modeBarButtonsToAdd:[]}};
  function fmt(v){{return (v==null||isNaN(v))?'-':Number(v).toFixed(2);}}
