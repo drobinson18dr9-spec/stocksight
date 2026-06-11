@@ -357,12 +357,19 @@ def build_forecasts():
    }});
    traces.push({{x:fwd.map(r=>r.date),y:fwd.map(r=>r.ensemble_mean),name:'Ensemble fwd',mode:'lines',line:{{color:'red',width:2.5,dash:'dash'}}}});
    var L=Object.assign({{}},LAYOUT,{{title:{{text:d.ticker+': actual vs predictions',font:{{size:14}},x:0.04,xanchor:'left'}}}});
-   // Default the visible window to the recent actuals through the forward
-   // forecast, so it opens focused on today instead of the full history.
+   // Anchor the visible window to TODAY (the viewer's current date), not just to
+   // the data's last date, so the axis always reads current. End at the later of
+   // the forward forecast or today; start ~30 days back.
    var ad=wf.map(r=>r.date);
    if(ad.length){{
-     var startDate=ad[Math.max(0,ad.length-14)];
-     var endDate=(fwd&&fwd.length)?fwd[fwd.length-1].date:ad[ad.length-1];
+     var today=new Date().toISOString().slice(0,10);
+     var lastFwd=(fwd&&fwd.length)?fwd[fwd.length-1].date:ad[ad.length-1];
+     var endDate=(lastFwd>today)?lastFwd:today;
+     var d0=new Date(); d0.setDate(d0.getDate()-30);
+     var startDate=d0.toISOString().slice(0,10);
+     // If the data is even older than that, fall back to the data window so the
+     // line is not pushed off-screen.
+     if(ad[ad.length-1]<startDate) startDate=ad[Math.max(0,ad.length-14)];
      L.xaxis=Object.assign({{}},L.xaxis,{{range:[startDate,endDate],automargin:true}});
    }}
    Plotly.newPlot('chart',traces,L,CFG);
