@@ -92,7 +92,22 @@ def main(tickers=None, test_days=20, horizon=15,
     except SystemExit:                       # Alpaca returned nothing (e.g. all OTC)
         bars = pd.DataFrame(columns=["ticker", "timestamp", "close", "volume"])
 
-    # Fallback: any ticker Alpaca lacks (e.g. OTC/ADRs like RYCEY) -> Yahoo.
+    # STALENESS GATE: Alpaca's feed can lag (it was capping all tickers ~2 weeks
+    # behind). If its latest bar is more than 4 days old, drop it entirely so every
+    # ticker falls through to yfinance, which carries current data.
+    if len(bars):
+        try:
+            mx = pd.to_datetime(bars["timestamp"]).max()
+            age = (pd.Timestamp(datetime.now(timezone.utc)).tz_localize(None)
+                   - pd.Timestamp(mx).tz_localize(None)).days
+            if age > 4:
+                print(f"  Alpaca data stale (latest {pd.Timestamp(mx).date()}, "
+                      f"{age}d old); routing ALL tickers to yfinance for current data")
+                bars = bars.iloc[0:0]
+        except Exception as e:
+            print(f"  staleness check skipped: {e}")
+
+    # Fallback: any ticker Alpaca lacks (or all of them, if stale) -> Yahoo.
     have = {t for t, g in bars.groupby("ticker") if len(g) >= MIN_HISTORY_FORECAST} if len(bars) else set()
     missing = [t for t in tickers if t not in have]
     if missing:
