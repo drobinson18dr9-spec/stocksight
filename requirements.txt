@@ -17,3 +17,6 @@ yfinance>=0.2.40
 pynacl>=1.5
 pyjwt>=2.8
 cryptography>=42.0
+# SMS agent: clipboard + desktop UI automation for !prompt/+cowork/+code.
+pyperclip>=1.8
+pywinauto>=0.6.8; platform_system == "Windows"

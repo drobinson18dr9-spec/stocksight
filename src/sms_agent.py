@@ -157,6 +157,10 @@ MENU = (
     "@downloads / @claude / @stocksight <q> - those folders\n"
     "!do <task> - allow file edits (e.g. @downloads !do rename X to Y)\n"
     "!open - launch the Claude desktop app here\n"
+    "Pipeline: [@windows/@mac] [+cowork|+code] !prompt <text>\n"
+    "  +cowork !prompt <text> - start a Cowork session in the desktop app\n"
+    "  +code !prompt <text>   - open a Claude Code session (terminal) with it\n"
+    "  e.g. @windows +code !prompt scope a handshake omega task\n"
     "Stack with ; -> !open ; summary\n"
     "@menu - this list"
 )
@@ -251,6 +255,118 @@ def launch_app() -> str:
         return f"Could not open Claude app: {e}"
 
 
+def _set_clipboard(text: str):
+    """Put text on the OS clipboard (used to paste into the desktop app)."""
+    try:
+        import pyperclip
+        pyperclip.copy(text)
+        return
+    except Exception:
+        pass
+    if _IS_WINDOWS:
+        subprocess.run("clip", input=text, text=True, shell=True, timeout=10)
+    else:
+        subprocess.run("pbcopy", input=text, text=True, timeout=10)
+
+
+def cowork_prompt(text: str) -> str:
+    """Open the Claude desktop app and drop `text` into its input box, then submit,
+    starting a Cowork session with that prompt. This is real UI automation: it
+    needs the machine logged in with the screen UNLOCKED (a locked screen blocks
+    synthetic input). Best-effort; tune COWORK_LAUNCH_WAIT if the window is slow."""
+    text = (text or "").strip()
+    if not text:
+        return "Usage: !prompt <what you want Claude to do in the desktop app>"
+    wait = float(_os.environ.get("COWORK_LAUNCH_WAIT", "4"))
+    try:
+        _set_clipboard(text)
+        launch_app()
+        time.sleep(wait)                       # let the window come up / focus input
+        if _IS_WINDOWS:
+            from pywinauto import Desktop
+            from pywinauto.keyboard import send_keys
+            w = Desktop(backend="uia").window(title_re=".*[Cc]laude.*")
+            w.wait("visible ready", timeout=15)
+            w.set_focus()
+            time.sleep(0.6)
+            send_keys("^a{BACKSPACE}", pause=0.05)   # clear any leftover text
+            send_keys("^v", pause=0.05)              # paste the prompt
+            time.sleep(0.4)
+            send_keys("{ENTER}", pause=0.05)         # submit -> starts the session
+        else:  # macOS via AppleScript
+            script = ('tell application "Claude" to activate\n'
+                      'delay 1\n'
+                      'tell application "System Events"\n'
+                      '  keystroke "v" using command down\n'
+                      '  delay 0.3\n'
+                      '  key code 36\n'              # Return
+                      'end tell')
+            subprocess.run(["osascript", "-e", script], check=True, timeout=30)
+        return f"Started a Cowork session in the Claude desktop app on {THIS_PLATFORM} with your prompt."
+    except Exception as e:
+        return ("Opened the app but could not auto-type the prompt "
+                f"({e}). Is the screen unlocked? Prompt is on your clipboard, paste it.")
+
+
+def code_session(text: str, cwd: Path = ROOT) -> str:
+    """Open a VISIBLE interactive Claude Code session (a terminal window) in
+    `cwd`, seeded with `text` so you can take over on the desktop. This is the
+    '+code' surface, as opposed to the '+cowork' desktop app. Needs the user
+    logged in with the screen unlocked."""
+    text = (text or "").strip()
+    try:
+        if _IS_WINDOWS:
+            safe = text.replace('"', "'")
+            cmd = 'start "Claude Code" cmd /k claude' + (f' "{safe}"' if safe else "")
+            subprocess.Popen(cmd, shell=True, cwd=str(cwd))
+        else:
+            safe = text.replace('"', "'")
+            inner = f"cd {cwd} && claude" + (f' \\"{safe}\\"' if safe else "")
+            subprocess.Popen(["osascript", "-e",
+                              f'tell application "Terminal" to do script "{inner}"'])
+        return (f"Opened a Claude Code session on {THIS_PLATFORM} in {cwd}"
+                + (" with your prompt." if text else "."))
+    except Exception as e:
+        return f"Could not open Claude Code session: {e}"
+
+
+def parse_pipeline(seg: str):
+    """Parse the command pipeline: leading [@workspace] [!open] [+cowork|+code]
+    [!do] modifiers, then the command/prompt. Returns a plan dict."""
+    ws, surface, want_open, action, err = WORKSPACES["stocksight"], None, False, False, None
+    toks = seg.split()
+    i = 0
+    while i < len(toks):
+        t = toks[i].lower()
+        if t.startswith("@"):
+            name = t[1:]
+            if name in WORKSPACES:
+                ws = WORKSPACES[name]
+            elif name in ("windows", "mac"):
+                err = (f"@{name} targets the other machine; not reachable from this "
+                       f"{THIS_PLATFORM} box without CROSS_HOME.")
+            else:
+                err = f"Unknown workspace @{name}. Text @menu."
+            i += 1
+        elif t == "!open":
+            want_open = True; i += 1
+        elif t in ("+cowork", "+coworks"):
+            surface = "cowork"; i += 1
+        elif t == "+code":
+            surface = "code"; i += 1
+        elif t == "!do":
+            action = True; i += 1
+        else:
+            break
+    rest = " ".join(toks[i:]).strip()
+    mode = "plain"
+    if rest.lower().startswith("!prompt") or rest.lower().startswith("!cowork"):
+        mode = "prompt"
+        rest = rest.split(None, 1)[1] if " " in rest else ""
+    return {"ws": ws, "surface": surface, "open": want_open,
+            "action": action, "mode": mode, "text": rest, "err": err}
+
+
 QUICK_CMDS = ("summary", "stocks", "picks", "!open", "open claude",
               "!open claude", "@menu", "menu")
 
@@ -261,21 +377,47 @@ def is_quick(seg: str) -> bool:
 
 
 def handle_one(seg: str) -> str:
-    """Run a single (non-stacked) command and return its reply."""
+    """Run a single (non-stacked) command and return its reply.
+
+    Pipeline grammar:  [@workspace] [!open] [+cowork|+code] [!do] <command>
+    where <command> is: !prompt <text> | summary | a question | a !do task.
+    Examples:
+      @windows +cowork !prompt scope a handshake omega task
+      @stocksight +code !prompt fix the IPO branch in predict.py
+      @downloads !do delete the old zip
+      !open
+      summary
+    """
     seg = (seg or "").strip()
     low = seg.lower().strip()
     if low in ("@menu", "menu"):
         return MENU
+    if low in ("open claude", "!open claude"):
+        return launch_app()
+
+    p = parse_pipeline(seg)
+    if p["err"]:
+        return p["err"]
+    surface, text = p["surface"], p["text"]
+
+    # An explicit prompt: route to the chosen surface (default Cowork app).
+    if p["mode"] == "prompt":
+        if surface == "code":
+            return code_session(text, p["ws"])
+        return cowork_prompt(text)          # +cowork (default): desktop app
+
+    # No !prompt. If a surface was named with text, treat the text as the prompt.
+    if surface == "code":
+        return code_session(text, p["ws"])
+    if surface == "cowork":
+        return cowork_prompt(text) if text else launch_app()
+
+    # Plain commands.
     if low in ("summary", "stocks", "picks"):
         return quick_summary()
-    if low in ("!open", "open claude", "!open claude"):
-        return launch_app()
-    ws, action, q, err = parse_routing(seg)
-    if err:
-        return err
-    if not q:
-        return "Empty command. Text @menu for the list."
-    return ask_claude(q, cwd=ws, action=action)
+    if not text:
+        return launch_app() if p["open"] else "Empty command. Text @menu for the list."
+    return ask_claude(text, cwd=p["ws"], action=p["action"])
 
 
 def handle_text(body: str) -> str:
