@@ -10,12 +10,22 @@ set -e
 # Repo = parent of this script's directory.
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$REPO/src/sms_agent.py"
-PY="$(command -v python3)"
 LABEL="com.stocksight.smsagent"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 [ -f "$SCRIPT" ] || { echo "Cannot find $SCRIPT"; exit 1; }
-[ -n "$PY" ]     || { echo "python3 not found on PATH"; exit 1; }
+
+# macOS Homebrew Python is externally managed (PEP 668), so a system-wide
+# pip install fails. Use a repo-local virtualenv and point launchd at it.
+VENV="$REPO/.venv"
+if [ ! -x "$VENV/bin/python" ]; then
+  echo "Creating virtualenv at $VENV ..."
+  python3 -m venv "$VENV" || { echo "Could not create venv"; exit 1; }
+fi
+PY="$VENV/bin/python"
+echo "Installing dependencies into the venv ..."
+"$PY" -m pip install --quiet --upgrade pip
+"$PY" -m pip install --quiet -r "$REPO/requirements.txt" || { echo "pip install failed"; exit 1; }
 
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$PLIST" <<EOF
