@@ -3,6 +3,9 @@ name: Compute ALL forecasts (parallel)
 # Precompute model forecasts for EVERY modelable ticker, in parallel across
 # many free runners, then assemble + deploy. Run manually from the Actions tab.
 on:
+  schedule:
+    - cron: "0 7 * * *"        # Daily 07:00 UTC: refresh EVERY ticker before the
+                                # 15:00 UTC scorecard, so all charts are current.
   workflow_dispatch:
     inputs:
       shards:
@@ -25,7 +28,7 @@ jobs:
     steps:
       - id: s
         run: |
-          N=${{ github.event.inputs.shards }}
+          N=${{ github.event.inputs.shards || '40' }}
           echo "matrix=$(python3 -c "import json;print(json.dumps(list(range($N))))")" >> "$GITHUB_OUTPUT"
 
   compute:
@@ -48,8 +51,8 @@ jobs:
           ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
         run: |
           python src/build_explorer.py --all-universe \
-            --shard ${{ matrix.shard }} --num-shards ${{ github.event.inputs.shards }} \
-            --test-days ${{ github.event.inputs.test_days }} --horizon 10
+            --shard ${{ matrix.shard }} --num-shards ${{ github.event.inputs.shards || '40' }} \
+            --test-days ${{ github.event.inputs.test_days || '12' }} --horizon 10
       - uses: actions/upload-artifact@v4
         with:
           name: pred-${{ matrix.shard }}
