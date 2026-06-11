@@ -293,7 +293,13 @@ def build_forecasts():
  .chip{{display:inline-block;background:#e6e9f0;border-radius:14px;padding:5px 10px;margin:3px;font-size:14px}}
  .chip b{{cursor:pointer;color:#a33;margin-left:6px}}
  .tabs button{{background:#e6e9f0;color:#1a1a2e;margin-right:8px}} .tabs button.on{{background:#0f1b3d;color:#fff}}
- @media (max-width:600px){{ header h1{{font-size:19px}} input{{width:100%}} .card{{margin:0 8px 10px;padding:8px}} }}
+ @media (max-width:600px){{
+   header h1{{font-size:19px}} header p{{font-size:12px}}
+   input{{width:100%}} .card{{margin:0 8px 10px;padding:8px}}
+   .chart{{height:54vh;min-height:300px}}
+   table{{font-size:11px}} th,td{{padding:5px 7px}}
+   h4{{font-size:14px}} .chip{{font-size:13px}}
+ }}
 </style></head><body>
 <header><h1>StockSight Forecasts</h1>
 <p><a href="index.html">&larr; scorecard</a> &middot; {len(all_syms)} tickers searchable. Dotted lines / forward table are future predictions.</p></header>
@@ -326,9 +332,12 @@ def build_forecasts():
 
 <script>
  var PRE = {pre_js};
- var LAYOUT = {{template:'plotly_white',margin:{{t:34,l:46,r:10,b:36}},
-   legend:{{orientation:'h',y:-0.18,x:0,font:{{size:11}}}},yaxis:{{title:'Price ($)'}}}};
- var CFG = {{responsive:true,displaylogo:false}};
+ var LAYOUT = {{template:'plotly_white',autosize:true,margin:{{t:46,l:44,r:8,b:34}},
+   legend:{{orientation:'h',y:-0.2,x:0,font:{{size:10}}}},yaxis:{{title:'Price ($)',automargin:true}},
+   xaxis:{{automargin:true}}}};
+ var CFG = {{responsive:true,displaylogo:false,
+   modeBarButtonsToRemove:['lasso2d','select2d','autoScale2d','toggleSpikelines'],
+   modeBarButtonsToAdd:[]}};
  function fmt(v){{return (v==null||isNaN(v))?'-':Number(v).toFixed(2);}}
  function pct(v){{return (v==null||isNaN(v))?'-':(v>=0?'+':'')+(v*100).toFixed(1)+'%';}}
  function annVol(wf){{var a=wf.map(r=>r.actual),x=[];for(var i=1;i<a.length;i++)x.push(a[i]/a[i-1]-1);
@@ -343,7 +352,15 @@ def build_forecasts():
      traces.push({{x:fwd.map(r=>r.date),y:fwd.map(r=>r[m]),mode:'lines',line:{{width:1,dash:'dot'}},showlegend:false}});
    }});
    traces.push({{x:fwd.map(r=>r.date),y:fwd.map(r=>r.ensemble_mean),name:'Ensemble fwd',mode:'lines',line:{{color:'red',width:2.5,dash:'dash'}}}});
-   var L=Object.assign({{}},LAYOUT,{{title:d.ticker+': actual vs predictions'}});
+   var L=Object.assign({{}},LAYOUT,{{title:{{text:d.ticker+': actual vs predictions',font:{{size:14}},x:0.04,xanchor:'left'}}}});
+   // Default the visible window to the recent actuals through the forward
+   // forecast, so it opens focused on today instead of the full history.
+   var ad=wf.map(r=>r.date);
+   if(ad.length){{
+     var startDate=ad[Math.max(0,ad.length-14)];
+     var endDate=(fwd&&fwd.length)?fwd[fwd.length-1].date:ad[ad.length-1];
+     L.xaxis=Object.assign({{}},L.xaxis,{{range:[startDate,endDate],automargin:true}});
+   }}
    Plotly.newPlot('chart',traces,L,CFG);
    var em='<h4>Model accuracy (backtest)</h4><table><tr><th>Model</th><th>MAE</th><th>RMSE</th><th>MAPE</th><th>Dir acc</th></tr>';
    d.error_metrics.forEach(r=>{{em+='<tr><td>'+r.model+'</td><td>'+r.MAE+'</td><td>'+r.RMSE+'</td><td>'+r['MAPE_%']+'%</td><td>'+r['DirAcc_%']+'%</td></tr>';}});

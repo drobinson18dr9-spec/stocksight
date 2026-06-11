@@ -72,6 +72,13 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: python src/scorecard.py --multi --top 12 --max-weight 0.25 --cadence "${{ steps.cad.outputs.cadence }}" ${{ steps.cad.outputs.notify_flag }}
 
+      - name: Refresh forecasts daily (portfolio + top names; full universe stays weekly)
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: python src/build_explorer.py
+
       - name: Build interactive dashboard
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
