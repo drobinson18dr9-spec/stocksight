@@ -116,11 +116,50 @@ WORKSPACES = {
     "stocksight": ROOT,                                  # default
     "downloads": _LOCAL_HOME / "Downloads",
     "claude": _LOCAL_HOME / "Claude",
+    "home": _LOCAL_HOME,                                  # forks to @windows/@mac
     THIS_PLATFORM: _LOCAL_HOME,                           # @windows or @mac = this home
 }
 _other = "mac" if _IS_WINDOWS else "windows"
 if _CROSS_HOME and Path(_CROSS_HOME).exists():
     WORKSPACES[_other] = Path(_CROSS_HOME)               # the other box, if mounted
+
+# Which daemon answers an UNtargeted text when both machines are running.
+# A text addressed @windows/@mac is answered only by that machine; an untargeted
+# text is answered only by the PRIMARY. Default primary is windows; override with
+# STOCKSIGHT_PRIMARY=mac on the Mac (or leave windows as the sole responder).
+PRIMARY = _os.environ.get("STOCKSIGHT_PRIMARY", "windows").lower()
+
+
+def addressed_platform(body: str):
+    """Return 'windows'/'mac' if the text is explicitly addressed to a machine,
+    else None. Used so two running daemons do not both reply."""
+    for tok in body.lower().split():
+        if tok in ("@windows", "@mac"):
+            return tok[1:]
+        if not tok.startswith("@"):
+            break
+    return None
+
+
+def should_answer(body: str) -> bool:
+    tgt = addressed_platform(body)
+    if tgt:
+        return tgt == THIS_PLATFORM        # only the addressed machine answers
+    return PRIMARY == THIS_PLATFORM        # untargeted -> only the primary answers
+
+
+MENU = (
+    "StockSight SMS commands:\n"
+    "summary - latest picks (fast)\n"
+    "<question> - Claude answers from the repo\n"
+    "@windows / @mac <q> - run on that machine's home\n"
+    "@home <q> - this machine's home (forks to @windows on PC, @mac on Mac)\n"
+    "@downloads / @claude / @stocksight <q> - those folders\n"
+    "!do <task> - allow file edits (e.g. @downloads !do rename X to Y)\n"
+    "!open - launch the Claude desktop app here\n"
+    "Stack with ; -> !open ; summary\n"
+    "@menu - this list"
+)
 
 
 def parse_routing(body: str):
@@ -212,23 +251,47 @@ def launch_app() -> str:
         return f"Could not open Claude app: {e}"
 
 
-def handle_text(body: str) -> str:
-    """Turn one inbound SMS body into a reply (shared by poll + webhook)."""
-    body = (body or "").strip()
-    if body.upper() in ("STOP", "STOPALL", "CANCEL", "END", "QUIT",
-                        "UNSUBSCRIBE", "REVOKE", "HELP", "INFO", "START", "YES"):
-        return ""                                  # carrier keywords, no reply
-    low = body.lower().strip()
+QUICK_CMDS = ("summary", "stocks", "picks", "!open", "open claude",
+              "!open claude", "@menu", "menu")
+
+
+def is_quick(seg: str) -> bool:
+    """A command that returns instantly (no Claude call) - so we skip the ack."""
+    return seg.lower().strip() in QUICK_CMDS
+
+
+def handle_one(seg: str) -> str:
+    """Run a single (non-stacked) command and return its reply."""
+    seg = (seg or "").strip()
+    low = seg.lower().strip()
+    if low in ("@menu", "menu"):
+        return MENU
     if low in ("summary", "stocks", "picks"):
         return quick_summary()
     if low in ("!open", "open claude", "!open claude"):
         return launch_app()
-    ws, action, q, err = parse_routing(body)
+    ws, action, q, err = parse_routing(seg)
     if err:
         return err
     if not q:
-        return "Empty question. Try: @windows what big files are in Downloads"
+        return "Empty command. Text @menu for the list."
     return ask_claude(q, cwd=ws, action=action)
+
+
+def handle_text(body: str) -> str:
+    """Turn one inbound SMS body into a reply. Supports stacking with ';'
+    (e.g. '!open ; summary'); each segment runs in order and replies are joined."""
+    body = (body or "").strip()
+    if body.upper() in ("STOP", "STOPALL", "CANCEL", "END", "QUIT",
+                        "UNSUBSCRIBE", "REVOKE", "HELP", "INFO", "START", "YES"):
+        return ""                                  # carrier keywords, no reply
+    segs = [s for s in (p.strip() for p in body.split(";")) if s]
+    if len(segs) <= 1:
+        return handle_one(body)
+    out = []
+    for s in segs:
+        out.append(f"[{s[:24]}] {handle_one(s)}")
+    return "\n".join(out)[:SMS_LIMIT]
 
 
 def serve_webhook(port=8787):
@@ -250,7 +313,7 @@ def serve_webhook(port=8787):
             sender = (data.get("From") or [""])[0]
             body = (data.get("Body") or [""])[0]
             print(f"[{datetime.now():%H:%M:%S}] webhook from {sender}: {body[:80]}")
-            reply = handle_text(body) if sender == me else ""
+            reply = handle_text(body) if (sender == me and should_answer(body)) else ""
             # TwiML response: Twilio sends `reply` back to the user automatically
             twiml = f"<?xml version='1.0' encoding='UTF-8'?><Response>{('<Message>'+_esc(reply)+'</Message>') if reply else ''}</Response>"
             self.send_response(200)
@@ -282,8 +345,18 @@ def main(once=False):
                 seen.add(msid); _save_seen(seen)
                 if (m.get("from") or "") != me:
                     continue
-                print(f"[{datetime.now():%H:%M:%S}] inbound: {(m.get('body') or '')[:80]}")
-                reply = handle_text(m.get("body") or "")
+                body = m.get("body") or ""
+                print(f"[{datetime.now():%H:%M:%S}] inbound: {body[:80]}")
+                if not should_answer(body):
+                    print(f"  not for {THIS_PLATFORM} (addressed elsewhere / not primary)")
+                    continue
+                # Confirm receipt for anything that is not instant, so you get a
+                # 'task started' text right away and the result when it finishes.
+                segs = [s.strip() for s in body.split(";") if s.strip()]
+                if any(not is_quick(s) for s in segs):
+                    send_sms(sid, tok, frm, me, f"Started on {THIS_PLATFORM}: {body[:120]}")
+                    print("  ack sent")
+                reply = handle_text(body)
                 if reply:
                     send_sms(sid, tok, frm, me, reply)
                     print(f"  replied ({len(reply)} chars)")
