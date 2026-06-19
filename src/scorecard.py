@@ -161,24 +161,31 @@ def fetch_bars(symbols: list[str], start: datetime, end: datetime) -> pd.DataFra
     print(f"Pulling {len(symbols)} tickers in {len(batches)} batches...")
 
     for i, batch in enumerate(batches, 1):
-        try:
-            req = StockBarsRequest(
-                symbol_or_symbols=batch,
-                timeframe=TimeFrame.Day,
-                start=start,
-                end=end,
-                adjustment="all",
-                # Force IEX: the free tier blocks recent SIP data (~15-day delay),
-                # which silently capped every pull at ~3 weeks stale. IEX is current.
-                feed="iex",
-            )
-            df = client.get_stock_bars(req).df
-            if df is not None and not df.empty:
-                df = df.reset_index().rename(columns={"symbol": "ticker"})
-                frames.append(df)
-        except Exception as e:
-            failed.extend(batch)
-            print(f"  batch {i} failed ({type(e).__name__}); will skip {len(batch)} syms")
+        req = StockBarsRequest(
+            symbol_or_symbols=batch,
+            timeframe=TimeFrame.Day,
+            start=start,
+            end=end,
+            adjustment="all",
+            # Force IEX: the free tier blocks recent SIP data (~15-day delay),
+            # which silently capped every pull at ~3 weeks stale. IEX is current.
+            feed="iex",
+        )
+        # Retry with exponential backoff so transient rate limits (429) don't
+        # silently drop a whole batch (the cause of stale long-tail tickers).
+        for attempt in range(5):
+            try:
+                df = client.get_stock_bars(req).df
+                if df is not None and not df.empty:
+                    df = df.reset_index().rename(columns={"symbol": "ticker"})
+                    frames.append(df)
+                break
+            except Exception as e:
+                if attempt == 4:
+                    failed.extend(batch)
+                    print(f"  batch {i} failed after retries ({type(e).__name__}); skip {len(batch)}")
+                else:
+                    time.sleep(min(2 ** attempt, 10))    # 1,2,4,8,10s backoff
         if i % 5 == 0 or i == len(batches):
             print(f"  batch {i}/{len(batches)} done")
         time.sleep(0.2)

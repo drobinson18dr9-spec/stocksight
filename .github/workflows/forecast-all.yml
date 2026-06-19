@@ -37,7 +37,10 @@ jobs:
     timeout-minutes: 300
     strategy:
       fail-fast: false
-      max-parallel: 20
+      # Cap concurrency so the shards do not collectively trip Alpaca's rate
+      # limit (the cause of dropped batches and stale long-tail tickers).
+      # Combined with the in-code retry/backoff, every batch now lands.
+      max-parallel: 6
       matrix:
         shard: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
