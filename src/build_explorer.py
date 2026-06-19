@@ -27,6 +27,42 @@ ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "predict"
 MIN_HISTORY_FORECAST = pr.MIN_HISTORY_FORECAST    # recent-IPO floor (~6 months)
 
 
+def _yf_bulk(tickers, start, end, chunk=300):
+    """Fast bulk daily bars from Yahoo (the Colab approach): one threaded
+    yf.download per chunk instead of per-ticker. Full-market data, current to
+    today. Use this when running OFF GitHub Actions (local / Colab), where Yahoo
+    does not throttle. Returns the long Alpaca-schema frame."""
+    import yfinance as yf
+    frames = []
+    uniq = sorted(set(tickers))
+    for i in range(0, len(uniq), chunk):
+        part = uniq[i:i + chunk]
+        try:
+            df = yf.download(part, start=start.strftime("%Y-%m-%d"),
+                             end=end.strftime("%Y-%m-%d"), interval="1d",
+                             auto_adjust=True, progress=False, threads=True)
+            if df is None or df.empty:
+                continue
+            close = df["Close"]; vol = df.get("Volume")
+            if isinstance(close, pd.Series):           # single ticker case
+                close = close.to_frame(part[0])
+                vol = vol.to_frame(part[0]) if vol is not None else None
+            for t in close.columns:
+                s = close[t].dropna()
+                if len(s) < MIN_HISTORY_FORECAST:
+                    continue
+                f = pd.DataFrame({"timestamp": pd.to_datetime(s.index).tz_localize(None),
+                                  "close": s.values, "ticker": t})
+                f["volume"] = (vol[t].reindex(s.index).values
+                               if vol is not None and t in vol else 0)
+                frames.append(f)
+        except Exception as e:
+            print(f"  yf chunk {i//chunk} failed ({type(e).__name__})")
+        print(f"  yfinance bulk: {i + len(part)}/{len(uniq)} pulled")
+    return (pd.concat(frames, ignore_index=True) if frames else
+            pd.DataFrame(columns=["timestamp", "close", "volume", "ticker"]))
+
+
 def _yf_bars(tickers, start, end):
     """Daily bars from Yahoo for tickers Alpaca lacks (OTC/ADRs). Returns a
     long DataFrame matching the Alpaca schema (ticker, timestamp, close, volume)."""
@@ -68,7 +104,7 @@ def portfolio_tickers(top_n=12, extra_good=28) -> list[str]:
 
 
 def main(tickers=None, test_days=20, horizon=15,
-         all_universe=False, shard=0, num_shards=1):
+         all_universe=False, shard=0, num_shards=1, source="alpaca"):
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     if not tickers:
         if all_universe:
@@ -88,35 +124,26 @@ def main(tickers=None, test_days=20, horizon=15,
     # (it caps ~2020-07, ~6y); more history trains the walk-forward models better.
     # Asking for 12y is harmless: the API returns whatever it has.
     start = datetime.now(timezone.utc) - timedelta(days=int(12 * 365))
-    end = datetime.now(timezone.utc) - timedelta(days=1)
-    try:
-        bars = sc.fetch_bars(tickers, start, end)
-    except SystemExit:                       # Alpaca returned nothing (e.g. all OTC)
-        bars = pd.DataFrame(columns=["ticker", "timestamp", "close", "volume"])
+    end = datetime.now(timezone.utc)
 
-    # STALENESS GATE: Alpaca's feed can lag (it was capping all tickers ~2 weeks
-    # behind). If its latest bar is more than 4 days old, drop it entirely so every
-    # ticker falls through to yfinance, which carries current data.
-    if len(bars):
+    if source == "yf":
+        # Local / Colab path: bulk Yahoo pull. Full-market data, current to today,
+        # not throttled off GitHub Actions. This is the reliable full-universe path.
+        print("  source=yfinance (bulk). Pulling current full-market data...")
+        bars = _yf_bulk(tickers, start, end)
+    else:
         try:
-            mx = pd.to_datetime(bars["timestamp"]).max()
-            age = (pd.Timestamp(datetime.now(timezone.utc)).tz_localize(None)
-                   - pd.Timestamp(mx).tz_localize(None)).days
-            if age > 4:
-                print(f"  Alpaca data stale (latest {pd.Timestamp(mx).date()}, "
-                      f"{age}d old); routing ALL tickers to yfinance for current data")
-                bars = bars.iloc[0:0]
-        except Exception as e:
-            print(f"  staleness check skipped: {e}")
-
-    # Fallback: any ticker Alpaca lacks (or all of them, if stale) -> Yahoo.
-    have = {t for t, g in bars.groupby("ticker") if len(g) >= MIN_HISTORY_FORECAST} if len(bars) else set()
-    missing = [t for t in tickers if t not in have]
-    if missing:
-        yb = _yf_bars(missing, start, end)
-        if len(yb):
-            bars = pd.concat([bars, yb], ignore_index=True)
-            print(f"  yfinance fallback supplied {yb['ticker'].nunique()} names")
+            bars = sc.fetch_bars(tickers, start, end)
+        except SystemExit:                   # Alpaca returned nothing (e.g. all OTC)
+            bars = pd.DataFrame(columns=["ticker", "timestamp", "close", "volume"])
+        # Any ticker Alpaca lacks -> per-ticker Yahoo fallback.
+        have = {t for t, g in bars.groupby("ticker") if len(g) >= MIN_HISTORY_FORECAST} if len(bars) else set()
+        missing = [t for t in tickers if t not in have]
+        if missing:
+            yb = _yf_bars(missing, start, end)
+            if len(yb):
+                bars = pd.concat([bars, yb], ignore_index=True)
+                print(f"  yfinance fallback supplied {yb['ticker'].nunique()} names")
 
     done = []
     for t in tickers:
@@ -169,6 +196,9 @@ if __name__ == "__main__":
                     help="compute every modelable name in the universe")
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--num-shards", type=int, default=1)
+    ap.add_argument("--source", choices=["alpaca", "yf"], default="alpaca",
+                    help="yf = bulk Yahoo pull (use locally/Colab; full + current)")
     args = ap.parse_args()
     main(tickers=args.tickers, test_days=args.test_days, horizon=args.horizon,
-         all_universe=args.all_universe, shard=args.shard, num_shards=args.num_shards)
+         all_universe=args.all_universe, shard=args.shard, num_shards=args.num_shards,
+         source=args.source)
