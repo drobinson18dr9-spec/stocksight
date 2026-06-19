@@ -295,6 +295,16 @@ For research and education. Do your own diligence.</footer>
     out = SITE / "index.html"
     out.write_text(html, encoding="utf-8")
     print(f"Wrote dashboard: {out}")
+
+    # Machine-readable picks for the SMS 'summary' command (always current,
+    # served by Pages so the daemon never reads a stale local file).
+    import json as _json
+    picks = [{"ticker": r["ticker"], "price": round(float(r["current_price"]), 2),
+              "weight": round(float(r["weight"]), 4)}
+             for _, r in portfolio.head(6).iterrows()]
+    (SITE / "latest_picks.json").write_text(
+        _json.dumps({"asof": asof, "picks": picks}), encoding="utf-8")
+
     build_forecasts()
     try:
         import policy_pages; policy_pages.write()
