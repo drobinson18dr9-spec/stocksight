@@ -26,6 +26,53 @@ SITE = Path(__file__).resolve().parents[1] / "reports" / "site"
 REPORTS = Path(__file__).resolve().parents[1] / "reports"
 COLORS = {"GOOD": "#1a9850", "NEUTRAL": "#9e9e9e", "BAD": "#d73027"}
 
+# Recent IPOs you hold: shown as a live card before the quant engine can score
+# them (a fresh listing has no history for Sharpe/momentum/forecasts). date = IPO.
+IPO_WATCH = [{"ticker": "SPCX", "name": "Space Exploration Technologies", "ipo": "2026-06-12"}]
+
+
+def _ipo_watch_card() -> str:
+    """Live quote + post-IPO timeline for held new IPOs (Finnhub). Empty on any
+    failure so the page still builds."""
+    import os, datetime as _dt
+    k = os.environ.get("FINNHUB_API_KEY")
+    if not k or not IPO_WATCH:
+        return ""
+    try:
+        import requests
+    except Exception:
+        return ""
+    rows = ""
+    for it in IPO_WATCH:
+        try:
+            q = requests.get("https://finnhub.io/api/v1/quote",
+                             params={"symbol": it["ticker"], "token": k}, timeout=15).json()
+            px, chg = q.get("c"), q.get("dp")
+            if not px:
+                continue
+            ipo = _dt.date.fromisoformat(it["ipo"])
+            lock = ipo + _dt.timedelta(days=180)
+            days_held = (_dt.date.today() - ipo).days
+            col = "#1a9850" if (chg or 0) >= 0 else "#d73027"
+            rows += (
+                f"<tr><td><b>{it['ticker']}</b><br><span style='color:#777;font-size:12px'>{it['name']}</span></td>"
+                f"<td style='font-size:18px'><b>${px:.2f}</b></td>"
+                f"<td style='color:{col}'>{chg:+.2f}%</td>"
+                f"<td>{it['ipo']}<br><span style='color:#777;font-size:12px'>{days_held} days public</span></td>"
+                f"<td>{lock.isoformat()}<br><span style='color:#777;font-size:12px'>180d lock-up</span></td></tr>")
+        except Exception:
+            continue
+    if not rows:
+        return ""
+    return (
+        "<div style='margin:10px;background:#fff;border:1px solid #e2e6ee;border-radius:10px;padding:12px 16px'>"
+        "<div style='font-weight:600;font-size:15px;margin-bottom:8px'>New IPO watch "
+        "<span style='color:#777;font-weight:400;font-size:13px'>(too new for quant scoring; tracked live)</span></div>"
+        "<div class='scroll'><table><tr><th>Ticker</th><th>Price</th><th>Today</th><th>IPO</th><th>Lock-up expiry</th></tr>"
+        f"{rows}</table></div>"
+        "<div style='color:#666;font-size:12px;margin-top:8px'>Sharpe/momentum/forecasts need months of history and "
+        "will populate automatically as this builds a track record. Lock-up expiry is a known supply event to watch.</div></div>")
+
 
 def _div(fig, first=False):
     return fig.to_html(full_html=False, include_plotlyjs="cdn" if first else False,
@@ -176,6 +223,8 @@ def build(universe_limit=None):
         tabs.append(("backtest", "Backtest"))
     tab_btns = "".join(f"<button onclick=\"show('{tid}')\">{label}</button>" for tid, label in tabs)
 
+    ipo_card = _ipo_watch_card()                  # live quote + post-IPO timeline
+
     html = f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>StockSight, {asof}</title>
@@ -209,6 +258,19 @@ def build(universe_limit=None):
   <div class="card"><div class="n bad">{len(bad)}</div>BAD</div>
   <div class="card"><div class="n">{len(portfolio)}</div>in portfolio</div>
 </div>
+{ipo_card}
+<details style="margin:10px;background:#fff;border:1px solid #e2e6ee;border-radius:10px;padding:12px 16px">
+<summary style="cursor:pointer;font-weight:600;font-size:15px">What these metrics mean (and what they actually predict)</summary>
+<div style="font-size:13.5px;line-height:1.6;margin-top:10px">
+<b>Verdict (GOOD / NEUTRAL / BAD)</b>: a blended rank of the signals below. It is a screen that tilts the odds, not a prediction. Backtests show it does not reliably beat SPY, treat it as disciplined filtering.<br>
+<b>Sharpe</b>: past return per unit of total risk (volatility). Measures how <i>smooth</i> the past gains were. It does NOT predict future return and is unstable out of sample. Use it as a risk-quality filter.<br>
+<b>Mom (1y) / Momentum (12-1)</b>: the last 12 months of return, skipping the most recent month. The one signal with real predictive edge, winners tend to keep winning for 3 to 12 months. Modest, and it crashes hard in sharp reversals.<br>
+<b>Sortino</b>: like Sharpe but only penalizes <i>downside</i> volatility. A risk filter, not a forecast.<br>
+<b>Max drawdown</b>: worst peak-to-trough loss over the window. Lower is steadier. Risk context, not a predictor.<br>
+<b>52-week-high nearness</b>: how close to the yearly high; mild continuation signal (anchoring underreaction).<br>
+<b>Weight</b>: the portfolio allocation, set by a risk-balanced optimizer (HRP / Ledoit-Wolf), higher-conviction, lower-correlation names get more.<br>
+<span style="color:#666">Bottom line: these manage risk and enforce discipline. They are not a crystal ball. The real edge comes from pairing them with fundamentals and catalysts.</span>
+</div></details>
 <div class="tabs">{tab_btns}<a class="tablink" href="forecasts.html">Model Forecasts &rarr;</a></div>
 <div id="picks" class="chart"><h3 style="margin:6px 10px">Optimized portfolio</h3><div class="scroll">{table}</div></div>
 <div id="fundamentals" class="chart"><div class="scroll">{fund_table}</div></div>
