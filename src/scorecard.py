@@ -82,6 +82,10 @@ MIN_SHARPE_TSTAT = 1.5             # Sharpe must be ~marginally significant for 
 
 WARRANT_UNIT_SUFFIXES = ("WS", "WT", "WSA", "WTA", "UN", "UNA")
 
+# Names ALWAYS tracked even if Alpaca's asset list hasn't picked them up yet
+# (e.g. brand-new IPOs you hold). They auto-populate metrics as history builds.
+WATCHLIST = {"SPCX"}
+
 load_dotenv(ROOT / ".env")
 
 # Public dashboard URL (GitHub Pages); overridable via env.
@@ -130,6 +134,7 @@ def load_universe(limit: int | None = None, include_alpaca: bool = True) -> list
         .loc[lambda s: s.str.match(r"^[A-Z]+$", na=False)]
     )
     universe = {s for s in syms if not s.endswith(WARRANT_UNIT_SUFFIXES) and 1 <= len(s) <= 5}
+    universe |= WATCHLIST                         # always track held names (new IPOs)
     if include_alpaca:
         universe |= alpaca_active_symbols()      # merge full live Alpaca universe (~13k)
     cleaned = sorted(universe)
@@ -163,6 +168,9 @@ def fetch_bars(symbols: list[str], start: datetime, end: datetime) -> pd.DataFra
                 start=start,
                 end=end,
                 adjustment="all",
+                # Force IEX: the free tier blocks recent SIP data (~15-day delay),
+                # which silently capped every pull at ~3 weeks stale. IEX is current.
+                feed="iex",
             )
             df = client.get_stock_bars(req).df
             if df is not None and not df.empty:

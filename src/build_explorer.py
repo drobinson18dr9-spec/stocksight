@@ -84,8 +84,10 @@ def main(tickers=None, test_days=20, horizon=15,
     print(f"Precomputing forecasts: {len(tickers)} names "
           f"(shard {shard}/{num_shards}, all_universe={all_universe})")
 
-    # One batched pull for all names
-    start = datetime.now(timezone.utc) - timedelta(days=int(3 * 365) + 60)
+    # One batched pull for all names. Pull as much history as Alpaca IEX allows
+    # (it caps ~2020-07, ~6y); more history trains the walk-forward models better.
+    # Asking for 12y is harmless: the API returns whatever it has.
+    start = datetime.now(timezone.utc) - timedelta(days=int(12 * 365))
     end = datetime.now(timezone.utc) - timedelta(days=1)
     try:
         bars = sc.fetch_bars(tickers, start, end)
