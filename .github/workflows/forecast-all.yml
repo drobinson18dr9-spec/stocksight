@@ -53,7 +53,7 @@ jobs:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
         run: |
-          python src/build_explorer.py --all-universe \
+          python src/build_explorer.py --all-universe --source yf \
             --shard ${{ matrix.shard }} --num-shards ${{ github.event.inputs.shards || '40' }} \
             --test-days ${{ github.event.inputs.test_days || '12' }} --horizon 10
       - uses: actions/upload-artifact@v4
