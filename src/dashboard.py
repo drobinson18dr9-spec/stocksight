@@ -269,7 +269,9 @@ def build(universe_limit=None):
 <b>Max drawdown</b>: worst peak-to-trough loss over the window. Lower is steadier. Risk context, not a predictor.<br>
 <b>52-week-high nearness</b>: how close to the yearly high; mild continuation signal (anchoring underreaction).<br>
 <b>Weight</b>: the portfolio allocation, set by a risk-balanced optimizer (HRP / Ledoit-Wolf), higher-conviction, lower-correlation names get more.<br>
-<span style="color:#666">Bottom line: these manage risk and enforce discipline. They are not a crystal ball. The real edge comes from pairing them with fundamentals and catalysts.</span>
+<b>News tone</b>: average sentiment of recent headlines (multi-source, scored -1 to +1). Positive (green) means the coverage skews bullish, negative (red) bearish. A short-horizon, event-driven read, not a long-run signal.<br>
+<b>3d &Delta;</b>: 3-day change in that news tone. Positive means sentiment is improving over the last three days, negative means it is souring. Catches a news shift before price fully moves.<br>
+<b>Src agree</b>: a check that the separate news sources agree on direction. A check means the tone is not driven by one outlier headline.
 </div></details>
 <div class="tabs">{tab_btns}<a class="tablink" href="forecasts.html">Model Forecasts &rarr;</a></div>
 <div id="picks" class="chart"><h3 style="margin:6px 10px">Optimized portfolio</h3><div class="scroll">{table}</div></div>
@@ -434,15 +436,16 @@ def build_forecasts():
    // the forward forecast or today; start ~30 days back.
    var ad=wf.map(r=>r.date);
    if(ad.length){{
-     var today=new Date().toISOString().slice(0,10);
-     var lastFwd=(fwd&&fwd.length)?fwd[fwd.length-1].date:ad[ad.length-1];
-     var endDate=(lastFwd>today)?lastFwd:today;
-     var d0=new Date(); d0.setDate(d0.getDate()-30);
-     var startDate=d0.toISOString().slice(0,10);
-     // If the data is even older than that, fall back to the data window so the
-     // line is not pushed off-screen.
-     if(ad[ad.length-1]<startDate) startDate=ad[Math.max(0,ad.length-14)];
-     L.xaxis=Object.assign({{}},L.xaxis,{{range:[startDate,endDate],automargin:true}});
+     // Frame the axis PURELY on the viewer's current date: ~35 days back to a
+     // week past today. The axis always reaches today no matter how fresh the
+     // data is (a short data line just stops where its data stops).
+     var de=new Date(); de.setDate(de.getDate()+7);
+     var ds=new Date(); ds.setDate(ds.getDate()-35);
+     var endDate=de.toISOString().slice(0,10);
+     var startDate=ds.toISOString().slice(0,10);
+     // If a forward forecast runs past the +7 buffer, show all of it.
+     if(fwd&&fwd.length&&fwd[fwd.length-1].date>endDate) endDate=fwd[fwd.length-1].date;
+     L.xaxis=Object.assign({{}},L.xaxis,{{range:[startDate,endDate],autorange:false,automargin:true}});
    }}
    Plotly.newPlot('chart',traces,L,CFG);
    var em='<h4>Model accuracy (backtest)</h4><table><tr><th>Model</th><th>MAE</th><th>RMSE</th><th>MAPE</th><th>Dir acc</th></tr>';
