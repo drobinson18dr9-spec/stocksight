@@ -59,8 +59,19 @@ def _yf_bulk(tickers, start, end, chunk=300):
         except Exception as e:
             print(f"  yf chunk {i//chunk} failed ({type(e).__name__})")
         print(f"  yfinance bulk: {i + len(part)}/{len(uniq)} pulled")
-    return (pd.concat(frames, ignore_index=True) if frames else
-            pd.DataFrame(columns=["timestamp", "close", "volume", "ticker"]))
+    out = (pd.concat(frames, ignore_index=True) if frames else
+           pd.DataFrame(columns=["timestamp", "close", "volume", "ticker"]))
+    # Retry pass: tickers silently dropped inside a large bulk batch (a known
+    # yfinance flaw) are re-pulled one at a time so nothing is lost.
+    got = set(out["ticker"].unique()) if len(out) else set()
+    missing = [t for t in uniq if t not in got]
+    if missing:
+        print(f"  bulk dropped {len(missing)} tickers; retrying individually...")
+        retry = _yf_bars(missing, start, end)
+        if len(retry):
+            out = pd.concat([out, retry], ignore_index=True)
+            print(f"  recovered {retry['ticker'].nunique()} of {len(missing)}")
+    return out
 
 
 def _yf_bars(tickers, start, end):
