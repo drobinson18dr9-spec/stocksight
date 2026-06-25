@@ -27,13 +27,51 @@ Outputs: reports/predict/<TICKER>.json  + reports/charts/predict_<TICKER>.png
 from __future__ import annotations
 import argparse
 import json
+import os
 import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+# Silence the forecasting libraries' convergence chatter for good. The lazy
+# `from statsmodels...` / `from arch...` imports inside the model functions reset
+# the warnings filters when those libs first load, which clobbers a plain
+# module-level filterwarnings (that is why it kept leaking). So: import the heavy
+# libs eagerly HERE, so their import-time filter reset happens once, now; then lock
+# warnings off, name the specific convergence categories, and export the setting to
+# any worker processes. The fit call sites are also wrapped in catch_warnings below.
+os.environ.setdefault("PYTHONWARNINGS", "ignore")
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import statsmodels.tsa.arima.model        # noqa: F401
+    import statsmodels.tsa.holtwinters         # noqa: F401
+    import statsmodels.tsa.forecasting.theta   # noqa: F401
+    import arch                                # noqa: F401
 warnings.filterwarnings("ignore")
+for _mod, _cat in (("statsmodels.tools.sm_exceptions", "ConvergenceWarning"),
+                   ("arch.utility.exceptions", "ConvergenceWarning")):
+    try:
+        warnings.simplefilter("ignore", getattr(__import__(_mod, fromlist=[_cat]), _cat))
+    except Exception:
+        pass
+
+# Belt-and-suspenders: arch and statsmodels reset the warning FILTERS at runtime on
+# their non-converge path, which is why filters alone kept leaking (e.g. COLAU). So
+# intercept at the DISPLAY layer too, which no filter reset can undo: swallow the
+# forecasting libraries' convergence chatter by category name, pass everything else.
+_NOISY_WARN = ("ConvergenceWarning", "ValueWarning", "HessianInversionWarning",
+               "IterationLimitWarning", "InfeasibleTestError", "EstimationWarning")
+_orig_showwarning = warnings.showwarning
+
+
+def _quiet_showwarning(message, category, *a, **k):
+    if any(n in getattr(category, "__name__", "") for n in _NOISY_WARN):
+        return
+    return _orig_showwarning(message, category, *a, **k)
+
+
+warnings.showwarning = _quiet_showwarning
 
 import scorecard as sc
 
@@ -120,7 +158,9 @@ MODELS = {
 
 def _safe(fn, train, h):
     try:
-        out = np.asarray(fn(train, h), dtype=float)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = np.asarray(fn(train, h), dtype=float)
         if out.shape[0] != h or not np.all(np.isfinite(out)):
             return np.full(h, np.nan)
         return out
@@ -191,15 +231,17 @@ def _best_arima(prices: pd.Series, h: int) -> np.ndarray:
     from statsmodels.tsa.arima.model import ARIMA
     log_p = np.log(prices.values)
     best, best_aic = None, np.inf
-    for p in (0, 1, 2):
-        for d in (1,):
-            for q in (0, 1, 2):
-                try:
-                    fit = ARIMA(log_p, order=(p, d, q)).fit()
-                    if fit.aic < best_aic:
-                        best, best_aic = fit, fit.aic
-                except Exception:
-                    continue
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for p in (0, 1, 2):
+            for d in (1,):
+                for q in (0, 1, 2):
+                    try:
+                        fit = ARIMA(log_p, order=(p, d, q)).fit()
+                        if fit.aic < best_aic:
+                            best, best_aic = fit, fit.aic
+                    except Exception:
+                        continue
     if best is None:
         return np.full(h, np.nan)
     return np.exp(np.asarray(best.forecast(h)))
