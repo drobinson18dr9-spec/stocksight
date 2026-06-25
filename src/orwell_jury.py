@@ -52,6 +52,58 @@ import jury   # sibling module: model callables, LAB map, default_judge
 VERIFY_JURORS = ["claude", "openai", "gemini"]
 VERIFY_JUDGE = "grok"
 
+# --- network reachability preflight ------------------------------------------
+# Orwell tasks run inside the Claude desktop cowork VM, which may have NO egress
+# to the model API endpoints. A grounding audit must NEVER hang on an unreachable
+# endpoint, and must NEVER kill a claim just because the network was down. We TCP
+# preflight each endpoint (a few seconds, client-side timeout) and run the jury
+# only with the jurors that are actually reachable. If too few are reachable, the
+# multi-model jury reports "cannot run here" so the caller falls back to the
+# in-environment Claude Agent-tool panel (the Gate 4 floor), rather than killing.
+import socket
+
+ENDPOINTS = {
+    "openai": ("api.openai.com", 443),
+    "gemini": ("generativelanguage.googleapis.com", 443),
+    "grok":   ("api.x.ai", 443),
+    "claude": ("api.anthropic.com", 443),
+}
+_REACH_CACHE: dict = {}
+
+
+def _tcp_ok(host: str, port: int, timeout: float) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def reachable_providers(timeout: float = 4.0, force: bool = False) -> dict:
+    """Which model endpoints answer a TCP connect within `timeout` seconds.
+    Cached after the first call (the network does not change mid-run)."""
+    if _REACH_CACHE and not force:
+        return _REACH_CACHE
+    with ThreadPoolExecutor(max_workers=len(ENDPOINTS)) as ex:
+        futs = {n: ex.submit(_tcp_ok, h, p, timeout) for n, (h, p) in ENDPOINTS.items()}
+        res = {n: f.result() for n, f in futs.items()}
+    _REACH_CACHE.clear()
+    _REACH_CACHE.update(res)
+    return res
+
+
+def _not_reachable_result(reach: dict, claim: str = "", judge: str = "") -> dict:
+    return {
+        "ran": False,
+        "reachable": reach,
+        "reason": ("fewer than 2 model endpoints reachable from this environment, so the "
+                   "multi-model jury cannot run here. This is expected inside the cowork VM "
+                   "(no egress). Fall back to the in-environment Claude Agent-tool grounding "
+                   "panel (the Gate 4 floor), which works without external egress."),
+        "killed": False, "claim": claim, "verdicts": {}, "judge": judge,
+        "unverified_count": 0, "juror_total": 0, "judge_text": "",
+    }
+
 _JUROR_PROMPT = """You are an impartial grounding auditor on a Project Orwell rank submission. You are shown SOURCE EVIDENCE (rollout transcript excerpts and the source data behind it) and ONE CLAIM the submission makes. Judge ONLY from the evidence shown. Do not use outside knowledge and do not assume any fact that is not present in the evidence.
 
 For the CLAIM decide three things:
@@ -116,6 +168,18 @@ def verify_claim(claim: str, evidence: str,
     """Run the grounding panel on one claim against one evidence packet (web off)."""
     jurors = jurors or VERIFY_JURORS
     judge = judge or VERIFY_JUDGE
+
+    # Preflight: only call jurors whose endpoint actually answers. An unreachable
+    # juror is EXCLUDED from the vote, never counted as a kill.
+    reach = reachable_providers()
+    live_jurors = [j for j in jurors if reach.get(j, False)]
+    if len(live_jurors) < 2:
+        return _not_reachable_result(reach, claim, judge)
+    if not reach.get(judge, False):                    # judge endpoint down: pick a reachable one
+        judge = next((j for j in ("grok", "openai", "gemini", "claude") if reach.get(j)),
+                     live_jurors[0])
+    jurors = live_jurors
+
     prompt = _JUROR_PROMPT.format(evidence=evidence, claim=claim)
 
     def _ask(name):
@@ -143,6 +207,7 @@ def verify_claim(claim: str, evidence: str,
     killed = majority_unverified or judge_killed
 
     return {
+        "ran": True,
         "claim": claim,
         "verdicts": results,
         "unverified_count": n_unv,
@@ -157,6 +222,13 @@ def verify_ledger(claims: list[dict], evidence_map: dict,
                   jurors: list[str] | None = None, judge: str | None = None) -> dict:
     """Verify each ledger claim against its evidence packet. Returns per-claim
     results plus the kill list that must be fixed before any text enters the form."""
+    # One preflight for the whole ledger: if the jury cannot run here, say so once
+    # and let the caller fall back to the Claude Agent-tool panel. Do not kill.
+    reach = reachable_providers()
+    if sum(1 for j in (jurors or VERIFY_JURORS) if reach.get(j, False)) < 2:
+        return {"ran": False, "reachable": reach, "results": [], "killed": [],
+                "all_clear": False, "claim_count": len(claims),
+                "reason": _not_reachable_result(reach)["reason"]}
     out = []
     for c in claims:
         cid = c.get("id", "?")
@@ -171,11 +243,13 @@ def verify_ledger(claims: list[dict], evidence_map: dict,
         r["id"] = cid
         out.append(r)
     killed = [r for r in out if r["killed"]]
-    return {"results": out, "killed": [r["id"] for r in killed],
+    return {"ran": True, "results": out, "killed": [r["id"] for r in killed],
             "all_clear": not killed, "claim_count": len(out)}
 
 
 def _fmt(r: dict) -> str:
+    if r.get("ran") is False:
+        return f"[JURY DID NOT RUN]  {r.get('reason','')}\n    reachable: {r.get('reachable', {})}"
     head = "KILLED" if r["killed"] else "SURVIVES"
     tally = f"{r['unverified_count']}/{r['juror_total']} jurors UNVERIFIED"
     lines = [f"[{head}]  ({tally})  claim: {r['claim'][:90]}"]
@@ -200,6 +274,8 @@ def main(argv=None) -> int:
         ev = Path(args.evidence).read_text(encoding="utf-8") if args.evidence else ""
         r = verify_claim(args.claim, ev)
         print(_fmt(r))
+        if r.get("ran") is False:
+            return 3                                  # jury could not run; caller falls back
         print("\nJUDGE FULL:\n" + (r["judge_text"] or ""))
         return 1 if r["killed"] else 0
 
@@ -220,6 +296,15 @@ def main(argv=None) -> int:
         print("=" * 64)
         print("PROJECT ORWELL GATE 4: multi-model grounding jury")
         print("=" * 64)
+        if res.get("ran") is False:
+            print("JURY DID NOT RUN (no egress to the model endpoints from here).")
+            print(res.get("reason", ""))
+            print(f"reachable: {res.get('reachable', {})}")
+            print("Action: run Gate 4 as the in-environment Claude Agent-tool grounding")
+            print("panel instead (works without external egress), or hand the ledger to the")
+            print("host-side jury where the model endpoints are reachable.")
+            print("=" * 64)
+            return 3
         for r in res["results"]:
             print(_fmt(r))
             print()
