@@ -165,6 +165,8 @@ def should_answer(body: str) -> bool:
 MENU = (
     "Claude Commands\n"
     "<msg> : chat with web access\n"
+    "!jury <q> : Claude+GPT+Gemini answer, a judge synthesizes\n"
+    "!gpt <q> / !gemini <q> : one model solo\n"
     "!conversation : resume chat\n"
     "!exit : leave chat\n"
     "summary : latest picks\n"
@@ -787,6 +789,24 @@ def handle_one(seg: str) -> str:
                 "No Cowork session found yet. Start one with +cowork !prompt ...")
     if low in ("!unwatch", "!endwatch", "!watch off", "stop watching", "endwatch"):
         return cowork_watch_stop()
+    # Multi-model jury+judge, and single-model routing.
+    if low.startswith("!jury ") or low == "!jury":
+        q = seg.split(None, 1)[1] if " " in seg else ""
+        if not q:
+            return "Usage: !jury <question> (Claude+GPT+Gemini answer, a judge synthesizes)"
+        try:
+            import jury
+            return jury.jury_sms(q)
+        except Exception as e:
+            return f"Jury unavailable: {e}"
+    if low.startswith("!gpt ") or low.startswith("!gemini "):
+        model = "openai" if low.startswith("!gpt ") else "gemini"
+        q = seg.split(None, 1)[1]
+        try:
+            import jury
+            return jury.JURORS[model](q)[:SMS_LIMIT]
+        except Exception as e:
+            return f"{model} unavailable: {e}"
     if low in ("!new", "!reset", "new chat", "reset", "reboot"):
         return reset_conversation() if low != "reboot" else (
             reset_conversation() + " Text me to begin.")
