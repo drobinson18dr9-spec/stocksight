@@ -935,6 +935,16 @@ def main(once=False):
                 if reply:
                     send_sms(sid, tok, frm, me, reply)
                     print(f"  replied ({len(reply)} chars)")
+            # Orwell Gate 4 host bridge: run the multi-model jury on any request the
+            # cowork VM dropped in the shared Downloads queue (the VM has no egress to
+            # the model APIs; this host does). Isolated so a bridge error never stops SMS.
+            try:
+                import orwell_bridge
+                done = orwell_bridge.process_pending()
+                if done:
+                    print(f"  orwell bridge: ran jury on {done} request(s)")
+            except Exception as e:
+                print(f"  orwell bridge error: {e}")
             # Stream any new Cowork session replies back to you (disk tail),
             # gated to a 15-min digest. Stop watching after 45 min of no texts.
             cowork_watch_poll(lambda t: send_sms(sid, tok, frm, me, t[:SMS_LIMIT]))
