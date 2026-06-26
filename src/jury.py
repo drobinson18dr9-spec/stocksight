@@ -56,13 +56,40 @@ def _live(question: str) -> str:
 
 
 def _claude(question: str, live: bool | None = None) -> str:
-    """Claude via the Claude Code CLI (the existing access, no separate API key).
-
-    The prompt goes in over stdin, not as a shell argument, so multi-line text and
-    special characters can't be mangled by the Windows shell. Pass live=False to
-    forbid web access (Orwell verification reasons over provided evidence only).
+    """Claude juror. Prefers the Anthropic API (uses ANTHROPIC_API_KEY, uniform with
+    the other jurors, works headless in the host bridge); falls back to the Claude
+    Code CLI (your subscription login) if no API key is set. Pass live=False to forbid
+    web access (Orwell verification reasons over provided evidence only).
     """
     lv = LIVE if live is None else live
+
+    # Preferred path: the Anthropic Messages API (the API key actually gets used).
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=key)
+            base = {"model": os.environ.get("CLAUDE_MODEL", "claude-opus-4-8"),
+                    "max_tokens": 1500,
+                    "messages": [{"role": "user", "content": question}]}
+            attempts = []
+            if lv:                                       # server-side web search for live data
+                attempts.append({**base, "tools": [
+                    {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]})
+            attempts.append(base)                        # plain, no tools
+            for kw in attempts:
+                try:
+                    r = client.messages.create(**kw)
+                    text = "".join(getattr(b, "text", "") for b in r.content
+                                   if getattr(b, "type", "") == "text").strip()
+                    if text:
+                        return text
+                except Exception:
+                    continue
+        except Exception:
+            pass                                         # fall through to the CLI
+
+    # Fallback path: the Claude Code CLI (no API key needed; uses your subscription).
     try:
         parts = ["claude", "-p",
                  "--model", os.environ.get("CLAUDE_MODEL", "claude-opus-4-8"),
